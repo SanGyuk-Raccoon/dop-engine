@@ -1,6 +1,6 @@
 ---
 document: DOP Engine 개발 명세서
-status: proposed
+status: accepted
 target_version: v1.0-personal
 primary_environment: browser-memory web applications
 language: TypeScript
@@ -9,7 +9,7 @@ audience:
   - AI coding agents
   - maintainer
 source_of_truth: true
-last_updated: 2026-08-26
+last_updated: 2026-08-29
 ---
 
 # DOP Engine 개발 명세서
@@ -17,15 +17,15 @@ last_updated: 2026-08-26
 *Yehonathan Sharvit의 DOP 방향을 바탕으로 한 개인용 안정 버전*
 
 > [!IMPORTANT] **AI Agent 읽기 지침**
-> 이 문서를 구현의 source of truth로 취급한다. 기능 추가보다 safety invariant와 non-goals를 우선한다. 구현 판단이 충돌하면 **비목표 → Safety invariant → ADR → milestone 완료 기준** 순으로 확인한다. P2 기능은 문서의 승격 조건을 충족하기 전에는 구현하지 않는다.
+> 이 문서를 구현 계약의 source of truth로 취급한다. DOP 자체에 관한 해석은 **2022년 저자 원칙 → 공식 책 source → 엔진 ADR** 순서로 확인한다. 구현 판단이 충돌하면 이 근거 순위 안에서 **비목표 → Safety invariant → ADR → milestone 완료 기준**을 적용한다. P2 기능은 문서의 승격 조건을 충족하기 전에는 구현하지 않는다.
 
-| **문서 상태** | Proposed · 구현 기준 문서                   |
+| **문서 상태** | Accepted · 구현 기준 문서                   |
 |---------------|---------------------------------------------|
 | **목표 버전** | v1.0-personal                               |
 | **주요 대상** | 브라우저 메모리 기반 웹 애플리케이션        |
 | **보조 대상** | Node.js 및 DB 기반 프로젝트의 DOP 적용 경계 |
 | **구현 언어** | TypeScript · ESM                            |
-| **작성일**    | 2026-08-26                                  |
+| **최종 갱신** | 2026-08-29                                  |
 
 **핵심 정의**
 
@@ -37,10 +37,12 @@ last_updated: 2026-08-26
 **요약 결정**
 
 - Browser-memory first, TypeScript first
-- JSON-compatible immutable data만 지원
+- unconstrained consumer generic과 runtime generic-data guard 사용
 - previous / current / next 기반의 보수적 three-way reconciliation
+- 기본 deep freeze, no-op revision/event 억제
 - DB transaction·ORM·도메인 규칙은 엔진 밖에 유지
 - 배열은 v1에서 atomic value로 취급
+- npm package는 `@sangyuk-raccoon/dop-engine`으로 고정
 - 개인 프로젝트 2개 이상에서 검증한 뒤 v1.0-personal 고정
 
 # 목차
@@ -74,19 +76,22 @@ last_updated: 2026-08-26
 주요 목적은 애플리케이션마다 반복되는 immutable state commit, validation lifecycle, optimistic conflict detection, three-way reconciliation을 한 번 구현하고 재사용하는 것이다. 도메인 계산 자체는 애플리케이션에 남긴다.
 
 ## 1.2 저자의 방향에서 가져온 핵심
-| **근거**                               | **엔진 설계에 반영하는 의미**                                                      |
-|----------------------------------------|------------------------------------------------------------------------------------|
-| 코드와 데이터 분리 [S1][S2]        | 도메인 계산은 엔진 밖의 함수이며 엔진은 데이터의 의미를 모른다.                    |
-| 범용 자료구조 [S1]                   | 엔진은 plain object·array·primitive 형태의 generic data만 다룬다.                  |
-| 데이터 불변성 [S1]                   | 현재 버전을 가리키는 reference만 변경되고 데이터 자체는 수정하지 않는다.           |
-| 스키마와 표현 분리 [S1]              | 엔진은 schema를 소유하지 않고 validator를 주입받는다.                              |
-| SystemState commit [S3]              | 도메인 calculation과 공통 commit을 분리한다.                                       |
-| three-way reconciliation [S4]        | previous/current/next의 변경 경로를 비교해 fast-forward·merge·conflict를 결정한다. |
-| Atom.swap [S5]                       | 상태 변경은 swap abstraction 안에서 계산되며 atomic backend 확장 가능성을 남긴다.  |
-| JDBC 결과를 list of maps로 변환 [S6] | DB를 대체하지 않고, DB boundary에서 generic data로 변환해 DOP 계산에 사용한다.     |
+| **분류**         | **근거**                               | **엔진 설계에 반영하는 의미**                                                      |
+|------------------|----------------------------------------|------------------------------------------------------------------------------------|
+| Author canon     | 코드와 데이터 분리 [S1][S2]           | 도메인 계산은 엔진 밖의 함수이며 엔진은 데이터의 의미를 모른다.                    |
+| Author canon     | 범용 자료구조 [S1]                     | 엔진은 plain object·array·primitive 형태의 generic data만 다룬다.                  |
+| Author canon     | 데이터 불변성 [S1]                     | 현재 버전을 가리키는 reference만 변경되고 데이터 자체는 수정하지 않는다.           |
+| Author canon     | 스키마와 표현 분리 [S1]                | 엔진은 schema를 소유하지 않고 validator를 주입받는다.                              |
+| Official example | SystemState commit [S3]                | 도메인 calculation과 공통 commit을 분리한다.                                       |
+| Official example | three-way reconciliation [S4]          | previous/current/next의 변경 경로를 비교해 fast-forward·merge·conflict를 결정한다. |
+| Official example | Atom.swap [S5]                         | 상태 변경은 swap abstraction 안에서 계산한다.                                      |
+| Official example | JDBC 결과를 list of maps로 변환 [S6]   | DB를 대체하지 않고, DB boundary에서 generic data로 변환해 DOP 계산에 사용한다.     |
+
+> [!IMPORTANT] **근거 우선순위**
+> 저자가 책 완성 후 다시 정리한 2022년 원칙 [S1]을 DOP 정의의 최상위 근거로 사용한다. 공식 책 source [S3]~[S6]는 원칙에 없는 operational detail을 보완한다. 두 근거가 정의하지 않은 TypeScript API, 오류, freeze, 배열 merge, package와 배포 방식만 이 저장소의 ADR로 결정한다. 예제의 교육용 단순화를 보편적인 DOP 원칙으로 확장하지 않는다.
 
 > [!NOTE] **설계 판단**
-> 저자의 예제는 책의 개념을 단계적으로 설명하기 위한 코드다. 본 문서는 이를 실제 라이브러리로 만들기 위해 Result 기반 오류 처리, 개발 모드 freeze, conflict diagnostics, ESM 패키징 등을 추가한다. 이러한 항목은 저자의 공식 API가 아니라 구현 안정성을 위한 결정이다.
+> 저자의 예제는 책의 개념을 단계적으로 설명하기 위한 코드다. 본 문서는 이를 실제 라이브러리로 만들기 위해 Result 기반 오류 처리, 기본 deep freeze, conflict diagnostics, ESM 패키징 등을 추가한다. 이러한 항목은 저자의 공식 API가 아니라 구현 안정성을 위한 결정이며 20장의 개별 ADR에서 추적한다.
 
 ## 1.3 용어
 | **용어**        | **정의**                                                                                                |
@@ -124,7 +129,8 @@ last_updated: 2026-08-26
 ## 2.3 성공 기준
 - [ ] 동일 패키지를 서로 다른 browser-memory 웹앱 2개 이상에서 프로젝트별 분기 없이 사용한다.
 - [ ] 두 번의 연속적인 실제 앱 통합에서 core public API를 변경하지 않는다.
-- [ ] conflict·invalid 결과에서는 state가 절대 변경되지 않는다.
+- [ ] conflict·invalid·exception에서는 state와 revision이 절대 변경되지 않는다.
+- [ ] no-op은 기존 reference와 revision을 유지하고 event를 발생시키지 않는다.
 - [ ] reconciliation property test에서 silent overwrite가 발생하지 않는다.
 - [ ] npm pack 결과를 독립 consumer fixture가 ESM과 TypeScript type declaration으로 정상 사용한다.
 - [ ] critical modules(commit, diff, reconciliation)의 branch coverage가 90% 이상이다.
@@ -211,85 +217,94 @@ engine core ─X─▶ React / Prisma / Zod / Ajv / domain code
 *코드 1. v1.0-personal public surface*
 
 ```ts
-export interface DopEngine<T extends DopData> {
-get(): T;
-commit(
-previous: T,
-next: T,
-): CommitResult<T>;
-update(
-calculation: (current: T) => T,
-): CommitResult<T>;
-subscribe(
-listener: (event: CommitEvent<T>) => void,
-): () => void;
+export interface DopEngine<T> {
+  get(): T;
+  commit(previous: T, next: T): CommitResult<T>;
+  update(calculation: (current: T) => T): CommitResult<T>;
+  subscribe(listener: (event: CommitEvent<T>) => void): () => void;
 }
 ```
 
-절대 핵심은 get()과 commit(previous, next)다. update()는 “현재 데이터를 읽고 순수 calculation을 실행한 뒤 commit”하는 편의 API이며, subscribe()는 browser integration을 위한 최소 기능이다.
+절대 핵심은 `get()`과 `commit(previous, next)`다. `update()`는 “현재 데이터를 읽고 순수 calculation을 실행한 뒤 commit”하는 편의 API이며, `subscribe()`는 browser integration을 위한 최소 기능이다. 공개 generic `T`에는 `DopData` bound를 두지 않는다. 지원 데이터 여부는 모든 engine boundary의 runtime guard가 최종 판정한다 ([ADR-002](docs/adr/0002-runtime-generic-data-boundary.md)).
 
 ## 5.2 Factory
 ```ts
-export interface DopEngineOptions<T extends DopData> {
-initialData: T;
-validate?: Validator<T>;
-freeze?: "development" | "always" | "never";
-onListenerError?: (error: unknown) => void;
+export type FreezePolicy = "always" | "never";
+
+export interface DopEngineOptions<T> {
+  readonly initialData: T;
+  readonly validate?: Validator<T>;
+  readonly freeze?: FreezePolicy;
+  readonly onListenerError?: (error: unknown) => void;
 }
-export function createDopEngine<T extends DopData>(
-options: DopEngineOptions<T>,
+
+export function createDopEngine<T>(
+  options: DopEngineOptions<T>,
 ): DopEngine<T>;
 ```
 
+`freeze`의 기본값은 `"always"`다. `"never"`는 측정된 비용이 있을 때만 선택하는 runtime enforcement opt-out이며 mutation을 허용하는 의미가 아니다 ([ADR-005](docs/adr/0005-default-deep-freeze.md)).
+
 ## 5.3 결과 모델
 ```ts
-export type CommitResult<T extends DopData> =
-| {
-status: "committed";
-data: T;
-revision: number;
-merged: boolean;
+export type CommitResult<T> =
+  | CommittedResult<T>
+  | ConflictResult<T>
+  | InvalidResult<T>;
+
+export interface CommittedResult<T> {
+  readonly status: "committed";
+  readonly data: T;
+  readonly revision: number;
+  readonly changed: boolean;
+  readonly merged: boolean;
 }
-| {
-status: "conflict";
-current: T;
-revision: number;
-conflicts: readonly Conflict[];
+
+export interface ConflictResult<T> {
+  readonly status: "conflict";
+  readonly current: T;
+  readonly revision: number;
+  readonly conflicts: readonly [Conflict, ...Conflict[]];
 }
-| {
-status: "invalid";
-current: T;
-revision: number;
-issues: readonly ValidationIssue[];
-};
+
+export interface InvalidResult<T> {
+  readonly status: "invalid";
+  readonly current: T;
+  readonly revision: number;
+  readonly issues: readonly [ValidationIssue, ...ValidationIssue[]];
+}
 ```
 
-Conflict와 validation failure는 예상 가능한 결과이므로 exception이 아니라 discriminated union으로 반환한다. 잘못된 API 사용, validator의 예기치 않은 throw, 내부 invariant 위반은 exception으로 처리한다.
+Conflict와 validation failure는 예상 가능한 결과이므로 exception이 아니라 discriminated union으로 반환한다. `committed`는 호출 성공을 나타내며 `changed`가 실제 data version 변경 여부를 나타낸다. 잘못된 API 사용, 지원하지 않는 데이터, validator 계약 위반과 내부 invariant 위반은 exception으로 처리한다 ([ADR-003](docs/adr/0003-validation-context-and-errors.md), [ADR-004](docs/adr/0004-commit-result-revision-and-events.md)).
 
 ## 5.4 기본 사용 예시
 ```ts
 type AppData = {
-readonly reservations: Readonly<Record<string, Reservation>>;
+  readonly reservations: Readonly<Record<string, Reservation>>;
 };
+
 const engine = createDopEngine<AppData>({
-initialData: { reservations: {} },
-validate: validateAppData,
-freeze: "development",
+  initialData: { reservations: {} },
+  validate: validateAppData,
 });
+
 const previous = engine.get();
 const next = addReservation(previous, command);
 const result = engine.commit(previous, next);
-if (result.status === "committed") {
-render(result.data);
+
+if (result.status === "committed" && result.changed) {
+  render(result.data);
 }
 ```
 
 ## 5.5 API 사용 규칙
+- `get()`은 clone이 아니라 현재 immutable data reference를 반환하며 state-changing commit 전까지 같은 reference를 유지한다.
 - calculation은 동기 함수여야 하며 Promise를 반환하지 않는다.
 - calculation과 validator는 엔진 API를 재호출하지 않는다. 재진입은 usage error로 처리한다.
 - calculation은 외부 I/O, logging, random ID 생성 같은 side effect를 수행하지 않는다.
 - ID·시간·외부 응답은 command나 context에 명시적으로 넣어 전달한다.
 - commit 이전에 previous를 mutation해서는 안 된다.
+- `initialData`, 외부 `previous`와 `next`, calculation 결과 및 최종 candidate는 runtime data guard를 통과해야 한다.
 - 결과가 conflict 또는 invalid면 application이 최신 데이터를 읽고 사용자 피드백·재계산 여부를 결정한다.
 
 # 6. 데이터 계약과 불변성
@@ -297,28 +312,39 @@ render(result.data);
 ```ts
 export type DopPrimitive = null | boolean | number | string;
 export type DopData =
-| DopPrimitive
-| readonly DopData[]
-| { readonly [key: string]: DopData };
+  | DopPrimitive
+  | readonly DopData[]
+  | { readonly [key: string]: DopData };
 ```
 
-| **허용**                                | **허용하지 않음**                         |
-|-----------------------------------------|-------------------------------------------|
-| null, boolean, finite number, string    | undefined, NaN, Infinity, bigint, symbol  |
-| plain object 또는 null-prototype object | class instance, Date, Map, Set, RegExp    |
-| readonly array                          | function, Promise, DOM node               |
-| acyclic tree                            | 순환 참조                                 |
-| 일반 key                                | \_\_proto\_\_, prototype, constructor key |
+`DopData`는 명시적인 generic data를 작성할 때 선택적으로 사용하는 helper type이며 public API의 generic constraint가 아니다. TypeScript type만으로 prototype, descriptor, finite number, sparse array와 cycle을 판정할 수 없으므로 runtime guard가 권위 있는 경계다 ([ADR-002](docs/adr/0002-runtime-generic-data-boundary.md)).
+
+| **범주**  | **허용**                                                          | **거부**                                                                       |
+|-----------|-------------------------------------------------------------------|--------------------------------------------------------------------------------|
+| Primitive | `null`, boolean, string, finite number                             | `undefined`, `NaN`, `Infinity`, bigint, symbol, function                       |
+| Object    | 현재 realm의 plain object 또는 null-prototype record              | class instance, `Date`, `Map`, `Set`, `RegExp`, `Promise`, DOM object           |
+| Record property | enumerable string-keyed own data property                  | accessor, custom non-enumerable property, symbol key                           |
+| Array     | 표준 `length`와 enumerable index만 가진 dense array                 | sparse array, accessor index, symbol 또는 custom property가 있는 array          |
+| Graph     | acyclic data, 순환하지 않는 동일 immutable subtree의 반복 reference | direct 또는 indirect cycle                                                     |
+| Key       | 일반 application key                                              | `__proto__`, `prototype`, `constructor`                                         |
+
+- optional property 자체가 없는 것은 허용하지만, 존재하는 property의 값이 `undefined`이면 거부한다.
+- cross-realm object는 현재 realm의 generic data로 먼저 정규화해야 한다.
+- guard는 engine invariant에 값이 들어오기 전에 전체 subtree를 검사하며 오류에 application data 전체를 포함하지 않는다.
+- 지원하지 않는 값은 application validation issue가 아니라 `DopDataError`다.
 
 ## 6.2 불변성 정책
 - 엔진은 deep clone을 수행하지 않는다. 구조 공유를 유지하기 위해 application이 새 version을 반환한다.
 - 동일 reference는 동일 version의 fast path로 사용한다.
-- 개발 모드에서는 initial data와 committed candidate를 deepFreeze해 mutation을 조기에 발견한다.
-- production 기본값은 freeze 비활성화이며, 작은 앱은 always를 선택할 수 있다.
+- 기본 `freeze: "always"`는 initial data, 외부 `previous`와 `next`, calculation 결과 및 최종 candidate를 validation 전에 in-place deep freeze한다.
+- `freeze: "never"`는 명시적인 opt-out이다. runtime data guard, reconciliation과 validation은 그대로 실행한다.
+- engine이 전체 subtree를 순회해 freeze한 object만 engine-owned `WeakSet`에 기록하며 structural sharing 시 재순회를 생략한다.
+- 단순히 `Object.isFrozen()`인 외부 object는 깊이 동결되었다고 신뢰하지 않고 children을 확인한다.
+- invalid, conflict 또는 exception으로 commit되지 않은 입력도 engine boundary를 통과하는 동안 이미 freeze될 수 있다.
 - 엔진은 성공한 commit의 current data만 보유하고 history를 자동 보관하지 않는다.
 
 > [!IMPORTANT] **중요한 한계**
-> TypeScript의 readonly는 compile-time 보조다. production에서 freeze를 끄면 runtime mutation을 완전히 방지할 수 없다. 라이브러리는 이를 숨기지 않고 명시적인 사용 계약과 development freeze로 관리한다.
+> TypeScript의 readonly는 compile-time 보조다. `freeze: "never"`에서도 application은 새 version을 만들어야 한다. 직접 mutation으로 reference identity가 깨진 경우 diff와 no-op 결과는 보장하지 않으며, deep freeze는 persistent data structure나 copy-on-write를 제공하지 않는다 ([ADR-005](docs/adr/0005-default-deep-freeze.md)).
 
 ## 6.3 구조 공유 권장 형태
 ```ts
@@ -341,69 +367,89 @@ name,
 ## 7.1 표준 흐름
 ```text
 Application:
-previous = engine.get()
-next = calculate(previous, command)
-result = engine.commit(previous, next)
+  previous = engine.get()
+  next = calculate(previous, command)
+  result = engine.commit(previous, next)
+
 Engine:
-current = stateCell.get()
-candidate = reconcile(current, previous, next)
-validate(candidate)
-stateCell.replace(candidate)
-revision += 1
-notify(commitEvent)
+  guardAndFreeze(previous, next)
+  stateCell.swap(currentState => {
+    candidate = reconcile(currentState.data, previous, next)
+    guardAndFreeze(candidate)
+    validate(candidate, commitContext)
+    if Object.is(candidate, currentState.data): keep currentState
+    else: return { data: candidate, revision: currentState.revision + 1 }
+  })
+  notify only after a state-changing commit
 ```
 
+Engine 생성 시에는 `initialData`를 guard·freeze한 뒤 `{ phase: "initial" }` context로 검증하고 revision `0`의 State Cell을 만든다. commit validation은 reconciliation 이후의 최종 candidate에 정확히 한 번 실행한다 ([ADR-003](docs/adr/0003-validation-context-and-errors.md), [ADR-008](docs/adr/0008-state-cell-and-concurrency-boundary.md)).
+
 ## 7.2 상세 순서
-| **단계** | **동작**        | **보장**                                                                                |
-|----------|-----------------|-----------------------------------------------------------------------------------------|
-| 1        | 입력 검사       | previous와 next가 지원 data contract를 만족하는지 development/runtime guard로 확인한다. |
-| 2        | 현재 상태 읽기  | State Cell에서 current와 revision을 읽는다.                                             |
-| 3        | Reconcile       | current === previous면 next를 사용하고, 아니면 three-way reconciliation을 수행한다.     |
-| 4        | 최종 validation | reconcile된 candidate를 application validator로 검증한다.                               |
-| 5        | Commit          | candidate를 current로 교체하고 revision을 정확히 한 번 증가시킨다.                      |
-| 6        | Notification    | commit이 완료된 후 event queue를 통해 listener를 호출한다.                              |
-| 7        | Result          | committed/conflict/invalid 중 하나를 반환한다.                                          |
+| **단계** | **동작**             | **보장**                                                                                       |
+|----------|----------------------|------------------------------------------------------------------------------------------------|
+| 1        | 입력 guard/freeze    | 외부 `previous`와 `next`를 지원 data contract로 검사하고 선택한 정책에 따라 freeze한다.         |
+| 2        | 현재 상태 읽기       | `StateCell.swap` 안에서 실제 `current`와 revision을 읽는다.                                    |
+| 3        | Reconcile            | `Object.is(current, previous)`이면 `next`, 아니면 보수적 three-way reconciliation 결과를 쓴다. |
+| 4        | Candidate guard/freeze | 최종 candidate가 engine invariant를 만족하도록 검사하고 freeze한다.                           |
+| 5        | 최종 validation      | candidate와 phase가 명확한 context를 application validator에 정확히 한 번 전달한다.            |
+| 6        | No-op 판정           | `Object.is(candidate, current)`이면 state, revision과 event를 그대로 유지한다.                  |
+| 7        | Commit               | 실제 변경이면 `swap`이 data를 교체하고 revision을 정확히 1 증가시킨다.                          |
+| 8        | Notification         | state-changing commit이 끝난 뒤 event queue를 통해 listener를 호출한다.                         |
+| 9        | Result               | committed/conflict/invalid 중 하나를 반환한다.                                                  |
 
 ## 7.3 실패 시 불변식
 > [!IMPORTANT] **Safety invariant**
-> conflict, invalid, validator exception, calculation usage error 중 어떤 실패가 발생해도 current data와 revision은 변경되지 않는다.
+> conflict, invalid, validator exception, calculation usage error, unsupported data와 internal error 중 어떤 실패가 발생해도 current data와 revision은 변경되지 않는다. no-op은 실패가 아니지만 동일하게 state를 교체하거나 revision을 증가시키지 않는다.
+
+### No-op, revision과 event
+
+- engine 생성 직후 revision은 `0`이다.
+- no-op은 `status: "committed"`, `changed: false`, 기존 `data` reference와 기존 revision을 반환한다.
+- 실제 변경은 `changed: true`이며 revision이 정확히 1 증가한다.
+- stale base를 reconcile했지만 적용할 next-side change가 없으면 no-op이고 `merged: false`다.
+- `merged: true`는 stale base의 non-empty next changes를 non-conflicting current changes와 실제로 결합해 state-changing commit을 만든 경우만 의미한다.
+- no-op에는 `CommitEvent`가 없으며 `StateCell`의 data도 교체하지 않는다 ([ADR-004](docs/adr/0004-commit-result-revision-and-events.md)).
 
 ## 7.4 update() 의미
 ```text
 update(calculation):
-assert not reentrant
-previous = get()
-next = calculation(previous)
-return commit(previous, next)
+  assert not reentrant
+  previous = get()
+  next = calculation(previous)
+  guard calculation result
+  return commit(previous, next)
 ```
 
-Browser main thread의 동기 calculation은 run-to-completion이므로 일반적으로 stale base가 생기지 않는다. update()는 가장 단순한 상태 변경 경로이며, async 작업은 get()과 commit()을 분리해 사용한다.
+Browser main thread의 동기 calculation은 run-to-completion이므로 일반적으로 stale base가 생기지 않는다. `update()`는 가장 단순한 상태 변경 경로이며 같은 reference를 반환하면 commit과 같은 no-op 규칙을 적용한다. async 작업은 `get()`과 `commit()`을 분리해 사용한다.
 
 # 8. Consistency와 reconciliation 규칙
 ## 8.1 기본 알고리즘
 ```text
 reconcile(current, previous, next):
-if Object.is(current, previous):
-return committedCandidate(next, merged = false)
-currentChanges = diff(previous, current)
-nextChanges = diff(previous, next)
-conflicts = overlappingPaths(currentChanges, nextChanges)
-if conflicts is not empty:
-return conflict(conflicts)
-candidate = applyChanges(current, nextChanges)
-return committedCandidate(candidate, merged = true)
+  if Object.is(current, previous):
+    return committedCandidate(next, merged = false)
+  currentChanges = diff(previous, current)
+  nextChanges = diff(previous, next)
+  if nextChanges is empty:
+    return committedCandidate(current, merged = false)
+  conflicts = overlappingPaths(currentChanges, nextChanges)
+  if conflicts is not empty:
+    return conflict(conflicts)
+  candidate = applyChanges(current, nextChanges)
+  return committedCandidate(candidate, merged = currentChanges is not empty)
 ```
 
 ## 8.2 Change 표현
 ```ts
 type Path = readonly string[];
 type Change =
-| { op: "add"; path: Path; after: DopData }
-| { op: "replace"; path: Path; before: DopData; after: DopData }
-| { op: "remove"; path: Path; before: DopData };
+  | { op: "add"; path: Path; after: DopData }
+  | { op: "replace"; path: Path; before: DopData; after: DopData }
+  | { op: "remove"; path: Path; before: DopData };
 ```
 
-배열은 leaf/atomic value로 취급하므로 v1의 path는 object key만 포함한다. 배열 내부 index 변경을 별도의 change path로 분해하지 않는다.
+배열은 leaf/atomic value로 취급하므로 v1의 `Change.path`는 object key만 포함한다. validation issue path가 numeric segment를 허용하는 것과는 별도 계약이다.
 
 ## 8.3 Path 충돌 규칙
 | **current 변경** | **next 변경**   | **결과**                     |
@@ -424,6 +470,18 @@ type Change =
 - Object.is(previousBranch, targetBranch)가 true면 해당 subtree traversal을 생략한다.
 - prototype pollution 위험이 있는 예약 key는 data contract 단계에서 거부한다.
 
+### 배열 atomic 계약
+
+- diff는 array 내부 index를 순회하지 않는다. `Object.is(previousArray, targetArray)`이면 change가 없고, 그 외에는 배열 전체 `replace`다.
+- 새 배열의 깊은 값이 기존 배열과 같아도 reference가 다르면 `replace`로 취급한다.
+- object property의 배열이 바뀌면 change와 conflict diagnostics의 path는 해당 property를 가리키고 operation은 `replace`다.
+- 같은 배열 path를 current와 next가 모두 바꾸면 서로 다른 index를 의도했더라도 conflict다.
+- 배열 path 변경과 sibling object path 변경은 자동 병합할 수 있다.
+- 한쪽이 배열의 parent를 교체·제거하고 다른 쪽이 해당 배열 path를 바꾸면 ancestor/descendant conflict다.
+- root data가 배열이면 양쪽의 root array 변경은 root path `[]` conflict다.
+- patch application은 array element를 merge하지 않고 after array reference를 전체 교체한다.
+- item 단위 merge가 필요한 application은 entity를 `byId` object로 정규화하고 표시 순서만 별도 array로 둔다 ([ADR-007](docs/adr/0007-atomic-arrays.md)).
+
 ## 8.5 반드시 만족해야 할 성질
 | **Property**             | **기대 결과**                          |
 |--------------------------|----------------------------------------|
@@ -438,28 +496,55 @@ type Change =
 # 9. Validation 모델
 ## 9.1 Validator contract
 ```ts
-export type Validator<T extends DopData> = (
-candidate: T,
+export type ValidationContext<T> =
+  | { readonly phase: "initial" }
+  | {
+      readonly phase: "commit";
+      readonly previous: T;
+      readonly current: T;
+      readonly merged: boolean;
+    };
+
+export type Validator<T> = (
+  candidate: T,
+  context: ValidationContext<T>,
 ) => ValidationResult;
+
 export type ValidationResult =
-| { ok: true }
-| { ok: false; issues: readonly ValidationIssue[] };
+  | { readonly ok: true }
+  | {
+      readonly ok: false;
+      readonly issues: readonly [ValidationIssue, ...ValidationIssue[]];
+    };
+
+export interface ValidationIssue {
+  readonly code: string;
+  readonly message: string;
+  readonly path?: readonly (string | number)[];
+}
 ```
 
+Commit context의 `previous`는 호출자가 계산에 사용한 base이고 `current`는 실제 commit 직전 data다. `merged`는 7장의 결과 의미와 동일하다. revision은 application validation이 engine diagnostics에 의존하지 않도록 context에서 제외한다 ([ADR-003](docs/adr/0003-validation-context-and-errors.md)).
+
 ## 9.2 책임 분리
-| **Application**                           | **Engine**                               |
-|-------------------------------------------|------------------------------------------|
-| schema 선택 및 정의                       | validator callback 호출                  |
-| schema validation과 domain invariant 구성 | 최종 candidate만 commit 전에 반드시 검증 |
-| 오류 메시지·path 정의                     | 표준 invalid result로 전달               |
-| Zod/Ajv/직접 함수 선택                    | 특정 validation library에 의존하지 않음  |
+| **Application**                           | **Engine**                                                    |
+|-------------------------------------------|---------------------------------------------------------------|
+| schema 선택 및 정의                       | runtime data guard를 먼저 실행                                |
+| schema validation과 domain invariant 구성 | frozen final candidate를 commit 전에 정확히 한 번 검증         |
+| 비어 있지 않은 code·message와 path 정의   | validator result shape를 검사하고 표준 invalid result로 전달   |
+| Zod/Ajv/직접 함수 선택                    | 특정 validation library에 의존하지 않음                        |
 
 ## 9.3 실행 시점
-- initialData는 engine 생성 시 한 번 검증한다.
-- commit 시에는 reconciliation을 완료한 최종 candidate를 검증한다.
+- `initialData`는 guard와 freeze 후 `{ phase: "initial" }` context로 한 번 검증한다.
+- commit 시에는 reconciliation을 완료한 최종 candidate를 `{ phase: "commit", previous, current, merged }` context로 정확히 한 번 검증한다.
 - async validation은 v1에서 지원하지 않는다.
 - 외부 시스템 조회가 필요한 검증은 calculation 이전 application service에서 수행하고 결과를 command/context에 넣는다.
-- validator가 throw하면 예상 가능한 invalid가 아니라 EngineExecutionError로 처리하고 state를 유지한다.
+- initial validator가 invalid를 반환하면 issues를 가진 `InitialDataValidationError`를 throw하고 engine을 생성하지 않는다.
+- commit validator가 invalid를 반환하면 current data, current revision과 issues를 가진 `status: "invalid"`를 반환한다.
+- validator가 throw하면 `EngineExecutionError`로 감싸고 `cause`를 보존한다.
+- Promise 또는 thenable, malformed result, 빈 issues나 잘못된 issue field는 validator 계약 위반 `EngineExecutionError`다.
+- issue의 `code`와 `message`는 비어 있지 않은 string이어야 하고 path segment는 string 또는 finite non-negative integer여야 한다.
+- validation issue와 exception에는 candidate나 전체 application data를 자동 포함하지 않는다.
 
 > [!NOTE] **이유**
 > 각 next가 개별적으로 valid해도 concurrent 변경과 병합된 candidate는 invariant를 깨뜨릴 수 있다. 따라서 validation의 안전한 기준점은 reconciliation 이후, commit 직전이다.
@@ -467,25 +552,26 @@ export type ValidationResult =
 # 10. State Cell과 동시성 범위
 ## 10.1 내부 모델
 ```ts
-interface VersionedState<T extends DopData> {
-readonly data: T;
-readonly revision: number;
+interface VersionedState<T> {
+  readonly data: T;
+  readonly revision: number;
 }
-interface StateCell<T extends DopData> {
-get(): VersionedState<T>;
-swap(
-update: (current: VersionedState<T>) => VersionedState<T>,
-): VersionedState<T>;
+
+interface StateCell<T> {
+  get(): VersionedState<T>;
+  swap(
+    update: (current: VersionedState<T>) => VersionedState<T>,
+  ): VersionedState<T>;
 }
 ```
 
-Public API의 version identity는 previous data reference이며, numeric revision은 diagnostics와 subscription을 위한 내부 메타데이터다. 직렬화된 DB version과 동일한 개념으로 간주하지 않는다.
+State Cell의 변경 primitive는 `replace`가 아니라 공식 예제의 `Atom.swap`에 대응하는 `swap`이다 [S5]. coordinator는 swap callback 안에서 실제 current를 기준으로 commit 결과를 계산하며, failure와 no-op에서는 같은 `VersionedState`를 반환한다. Public API의 version identity는 previous data reference이고 numeric revision은 data version 진단값이다. 직렬화된 DB version과 동일한 개념으로 간주하지 않는다 ([ADR-008](docs/adr/0008-state-cell-and-concurrency-boundary.md)).
 
 ## 10.2 v1에서 보장하는 것
 - Browser main thread와 하나의 JS isolate 안에서 lock을 사용하지 않는 optimistic commit semantics
 - await 동안 오래된 previous를 사용한 commit의 conflict 또는 reconciliation
 - 동기 update callback의 재진입 방지
-- 성공 commit마다 revision 정확히 1 증가
+- state-changing commit마다 revision 정확히 1 증가하고 no-op에서는 유지
 
 ## 10.3 v1에서 보장하지 않는 것
 - 여러 Worker가 같은 JS object를 동시에 갱신하는 hardware-level CAS
@@ -498,24 +584,44 @@ Public API의 version identity는 previous data reference이며, numeric revisio
 
 # 11. 오류·진단·이벤트 모델
 ## 11.1 예상 결과와 exception
-| **상황**                         | **처리**                                   |
-|----------------------------------|--------------------------------------------|
-| Concurrent path overlap          | CommitResult.status = conflict             |
-| Candidate invariant 실패         | CommitResult.status = invalid              |
-| Unsupported data type            | DopDataError exception                     |
-| Mutation detected in freeze mode | TypeError 또는 MutationError exception     |
-| Reentrant update/commit          | EngineUsageError exception                 |
-| Validator throws                 | EngineExecutionError exception, cause 보존 |
-| Internal impossible state        | EngineInvariantError exception             |
+| **상황**                            | **처리**                                                   |
+|-------------------------------------|------------------------------------------------------------|
+| Concurrent path overlap             | `CommitResult.status = "conflict"`                        |
+| Commit candidate invariant 실패     | `CommitResult.status = "invalid"`                         |
+| Initial data invariant 실패         | `InitialDataValidationError`, issues 보존                   |
+| Unsupported data                    | `DopDataError`                                             |
+| Frozen data의 application mutation  | ESM strict mode의 native `TypeError`                        |
+| Deep freeze 실행 실패               | `EngineExecutionError`, cause 보존                          |
+| Reentrant update/commit              | `EngineUsageError`                                         |
+| Validator throw 또는 계약 위반       | `EngineExecutionError`, 가능한 경우 cause 보존             |
+| Internal impossible state           | `EngineInvariantError`                                     |
+
+```ts
+export declare class DopDataError extends TypeError {}
+
+export declare class InitialDataValidationError extends Error {
+  readonly issues: readonly [ValidationIssue, ...ValidationIssue[]];
+}
+
+export declare class EngineUsageError extends Error {}
+
+export declare class EngineExecutionError extends Error {
+  override readonly cause?: unknown;
+}
+
+export declare class EngineInvariantError extends Error {}
+```
+
+이 exception class의 `name`과 상속 관계, `InitialDataValidationError.issues`, `EngineExecutionError.cause`만 v1 public contract다. message 문구와 stack 형식은 안정 API로 간주하지 않는다.
 
 ## 11.2 Conflict diagnostics
 ```ts
-interface Conflict {
-readonly currentPath: readonly string[];
-readonly nextPath: readonly string[];
-readonly relation: "same" | "ancestor" | "descendant";
-readonly currentOperation: "add" | "replace" | "remove";
-readonly nextOperation: "add" | "replace" | "remove";
+export interface Conflict {
+  readonly currentPath: readonly string[];
+  readonly nextPath: readonly string[];
+  readonly relation: "same" | "ancestor" | "descendant";
+  readonly currentOperation: "add" | "replace" | "remove";
+  readonly nextOperation: "add" | "replace" | "remove";
 }
 ```
 
@@ -523,17 +629,20 @@ readonly nextOperation: "add" | "replace" | "remove";
 
 ## 11.3 Commit event
 ```ts
-interface CommitEvent<T extends DopData> {
-readonly previous: T;
-readonly current: T;
-readonly revision: number;
-readonly merged: boolean;
+export interface CommitEvent<T> {
+  readonly previous: T;
+  readonly current: T;
+  readonly revision: number;
+  readonly merged: boolean;
 }
 ```
 
-- listener는 commit이 성공한 뒤에만 호출한다.
+- listener는 state-changing commit이 성공한 뒤에만 호출한다. no-op event는 없다.
+- `previous`는 호출자가 전달한 base가 아니라 교체 직전 실제 current이고 `current`는 새 candidate다.
+- no-op event가 없으므로 `CommitEvent`에는 `changed` field를 두지 않는다.
 - listener exception은 이미 완료된 commit을 rollback하지 않는다.
-- listener error는 onListenerError hook으로 전달한다.
+- listener error는 `onListenerError` hook으로 전달한다.
+- `onListenerError`가 없거나 hook 자체가 throw해도 commit result와 이후 listener dispatch에는 영향을 주지 않으며 engine이 그 오류를 다시 throw하지 않는다.
 - listener 안의 reentrant update는 내부 FIFO event queue로 다음 dispatch cycle에 처리한다.
 
 # 12. 사용하는 프로젝트의 개발 방식
@@ -675,7 +784,7 @@ await persistReservationDecision(tx, decision);
 | Property test   | fast-check             | reconciliation 불변식을 generated input으로 검증 [S9] |
 | Lint/format     | ESLint + Prettier      | 기계적 일관성                                           |
 | CI              | GitHub Actions         | lint, typecheck, test, build, pack smoke                |
-| Registry        | npm                    | 일반 dependency로 설치                                  |
+| Registry        | npm                    | `@sangyuk-raccoon/dop-engine`로 설치                    |
 | Publishing auth | npm trusted publishing | 장기 token 없이 OIDC 기반 publish [S10]               |
 
 ## 14.2 권장 compiler 정책
@@ -698,11 +807,15 @@ await persistReservationDecision(tx, decision);
 }
 ```
 
-TypeScript의 strict 옵션은 더 강한 correctness 보장을 활성화하며, declaration output은 npm library consumer의 type experience를 위해 필요하다 [S7]. 구체적인 Node·pnpm 버전은 packageManager와 .node-version에 pin하되 문서에는 고정 숫자를 박지 않는다.
+TypeScript의 strict 옵션은 더 강한 correctness 보장을 활성화하며, declaration output은 npm library consumer의 type experience를 위해 필요하다 [S7]. M0 package scaffold 이슈 #2에서 당시 Node Active LTS의 정확한 version과 호환되는 pnpm version을 선택하고 `.node-version`, `packageManager`와 lockfile에 같은 값으로 pin한다. `latest`, major-only range와 실행 환경 추론은 허용하지 않는다.
 
 ## 14.3 저장소 구조
 ```text
 dop-engine/
+├─ docs/
+│  └─ adr/
+│     ├─ README.md
+│     └─ 0001-....md
 ├─ src/
 │ ├─ index.ts
 │ ├─ data/
@@ -743,16 +856,21 @@ dop-engine/
 ├─ pnpm-lock.yaml
 ├─ README.md
 ├─ CHANGELOG.md
+├─ LICENSE                  # public release gate에서 추가
 └─ .github/workflows/
 ```
 
 ## 14.4 package 정책
 - 초기에는 단일 package와 단일 repository로 시작한다.
+- package 이름과 import specifier는 `@sangyuk-raccoon/dop-engine`이다. unscoped `dop-engine` alias와 internal subpath는 지원하지 않는다.
 - runtime dependency 0개를 목표로 한다. test/build dependency만 devDependencies에 둔다.
 - root export만 공개하고 내부 path import를 package exports로 차단한다.
 - sideEffects: false를 선언하고 import 시 전역 상태를 만들지 않는다.
 - ESM만 지원하며 CommonJS dual package는 personal stable 범위에서 제외한다.
-- package tarball에는 dist, README, LICENSE만 포함한다.
+- private development 동안 `package.json`은 `"private": true`, `"license": "UNLICENSED"`이며 npm registry에 public 또는 private package를 게시하지 않는다.
+- M0의 package 검증은 local tarball만 사용한다. private 단계 tarball에는 npm 필수 metadata와 승인된 `dist`, `README`만 포함하며 source, test와 repository 내부 문서를 제외한다.
+- 별도 public release 승인 시 root `LICENSE`에 `SanGyuk-Raccoon`과 공개 연도를 포함한 MIT License 전문을 추가하고 `license`를 `"MIT"`로 바꾼다.
+- public release에서는 `private` guard를 제거하고 `publishConfig.registry`를 `https://registry.npmjs.org/`, `publishConfig.access`를 `public`으로 고정한다. 이때 tarball에는 npm 필수 metadata, `dist`, `README`와 `LICENSE`만 포함한다 ([ADR-010](docs/adr/0010-package-identity-and-publication.md)).
 
 ## 14.5 개발 명령
 ```bash
@@ -780,9 +898,12 @@ install --frozen-lockfile
 → consumer smoke test
 Tag v*:
 all CI gates
+→ public release 승인을 확인
 → npm trusted publishing
 → GitHub Release + changelog
 ```
+
+M0 완료나 tag 생성만으로 publish하지 않는다. repository visibility 변경, MIT 전환과 최초 npm publish는 별도의 public release 작업과 사용자 승인이 있어야 한다.
 
 # 15. 테스트 전략
 ## 15.1 테스트 피라미드
@@ -796,7 +917,8 @@ all CI gates
 
 ## 15.2 Unit test 필수 목록
 - [ ] DopData: primitive, nested object, array 허용
-- [ ] DopData: undefined, Date, Map, cycle, reserved key 거부
+- [ ] DopData: undefined, non-finite number, descriptor, symbol key, sparse array, class instance, cycle, reserved key 거부
+- [ ] Public generic: index signature 없는 중첩 application interface 허용
 - [ ] diff: equal primitive/object fast path
 - [ ] diff: add, replace, remove
 - [ ] diff: nested object path
@@ -806,11 +928,14 @@ all CI gates
 - [ ] reconcile: current-only / next-only change
 - [ ] reconcile: independent nested change merge
 - [ ] reconcile: exact/ancestor/delete conflict
-- [ ] commit: initial data validation
-- [ ] commit: final candidate validation
+- [ ] array: same-reference no-op, one-side replace, same-path conflict, sibling merge, parent/root conflict
+- [ ] commit: initial validation context와 생성 실패
+- [ ] commit: final candidate와 previous/current/merged context validation
 - [ ] commit: invalid/conflict state unchanged
-- [ ] commit: revision increments exactly once
-- [ ] notification: success only, unsubscribe, listener error isolation
+- [ ] commit: no-op은 changed false, 같은 reference/revision, event 없음
+- [ ] commit: 실제 변경에서 revision이 정확히 한 번 증가
+- [ ] freeze: always 기본값, never opt-out, structural-sharing subtree cache
+- [ ] notification: state-changing success only, unsubscribe, listener error isolation
 - [ ] usage error: reentrant update, async-like Promise 반환 방지
 
 ## 15.3 Property-based test
@@ -845,6 +970,7 @@ all CI gates
 - Object.is reference equality로 변경되지 않은 subtree를 즉시 skip한다.
 - 배열은 atomic 처리해 deep element diff 비용과 index 의미 문제를 피한다.
 - engine은 clone하지 않고 application의 structural sharing을 활용한다.
+- 기본 deep freeze는 engine-owned `WeakSet`에 기록된 subtree의 재순회를 생략한다.
 - conflict diagnostics는 path 중심으로 유지해 큰 data 복사를 피한다.
 - history를 자동 유지하지 않아 메모리 retention을 줄인다.
 
@@ -874,58 +1000,58 @@ v1.0 이전에는 절대 시간 threshold를 CI gate로 삼지 않는다. 동일
 - npm publish는 OIDC trusted publishing을 사용하고 장기 token을 저장하지 않는다 [S10].
 
 # 17. 구현 로드맵
-버전은 기능의 양보다 안전성 검증 단계로 정의한다. 각 milestone은 다음 단계의 기능을 미리 넣지 않고 exit criteria를 만족한 뒤 종료한다.
+버전은 기능의 양보다 안전성 검증 단계로 정의한다. 아래 명칭과 범위는 GitHub milestone을 그대로 따른다. 각 milestone은 다음 단계의 기능을 미리 넣지 않고 exit criteria를 만족한 뒤 종료한다.
 
-| **Milestone**          | **범위**                                                   | **Exit criteria**                                                   |
-|------------------------|------------------------------------------------------------|---------------------------------------------------------------------|
-| M0 · Specification     | 공통 용어, API, non-goals, ADR 고정                        | 이 문서 승인, repository bootstrap, issue backlog 생성              |
-| v0.1 · Commit Core     | DopData, State Cell, get/update/commit, validation, Result | fast-forward commit과 invalid atomicity 검증                        |
-| v0.2 · Diff & Conflict | change model, path overlap, diagnostics                    | object add/replace/remove와 conflict matrix 통과                    |
-| v0.3 · Reconciliation  | three-way merge, arrays atomic, property tests             | independent change preservation과 no-silent-overwrite property 통과 |
-| v0.4 · Browser DX      | subscribe, event queue, dev freeze, examples               | browser example과 listener/reentrant test 통과                      |
-| v0.5 · Package Quality | consumer smoke, coverage, benchmark, CI release            | npm pack install 및 declaration test 통과                           |
-| v0.9 · Dogfood         | 개인 browser 앱 2개 적용, API 수정                         | 두 번째 앱 통합 이후 core API 변경 불필요                           |
-| v1.0-personal          | 문서·changelog·release 안정화                              | 18장의 승인 기준 모두 충족                                          |
+| **GitHub milestone**                                | **범위**                                                     | **Exit criteria**                                                        |
+|-----------------------------------------------------|--------------------------------------------------------------|--------------------------------------------------------------------------|
+| M0 · Author Canon & Public Contract                 | 근거 분류, 공개 계약, package scaffold와 기본 품질 gate      | 설계 미결정 없음, consumer type fixture와 lint/typecheck/build/pack 동작 |
+| v0.1 · Immutable Generic Data                       | runtime data guard, deep freeze, validator port              | mutation 차단, structural sharing 보존, schema library 독립              |
+| v0.2 · Calculation / Commit Core                    | State Cell, get/update/commit, Result, revision과 no-op       | fast-forward와 invalid/exception atomicity 검증                          |
+| v0.3 · Semantic Diff & Three-way Reconciliation     | semantic diff, path conflict, atomic arrays, property test    | independent merge와 no-silent-overwrite property 통과                    |
+| v0.4 · Browser State Integration                    | subscribe, FIFO event, listener 격리와 browser smoke         | state-changing commit event와 실제 browser ESM 동작                      |
+| v0.5 · Reusable Package                             | consumer fixture, coverage, benchmark, package 품질          | 독립 설치·타입·실행, critical coverage와 tarball 구성 검증                |
+| v0.9 · DOP Dogfood                                  | browser 앱 2개와 DB boundary 적용                            | 두 번째 앱 이후 core API 변경 없음                                      |
+| v1.0-personal · Stable Release                      | 최종 회귀, 문서, migration, 승인된 public release            | 18장의 승인 기준과 trusted publishing 완료                              |
 
 ## 17.1 M0 작업
-- [ ] Repository 생성 및 package name 결정
-- [ ] LICENSE와 공개/비공개 배포 정책 결정
-- [ ] Node/pnpm 버전 pin
-- [ ] tsconfig, lint, test, CI scaffold
-- [ ] ADR 파일 생성
-- [ ] 이 문서의 public API를 compile-only stub으로 작성
+- [Issue #1](https://github.com/SanGyuk-Raccoon/dop-engine/issues/1): 저자 근거 우선순위와 엔진 고유 ADR을 분리하고 public contract, package identity와 공개 정책을 확정한다.
+- [Issue #2](https://github.com/SanGyuk-Raccoon/dop-engine/issues/2): 정확히 pin한 Node/pnpm, strict ESM 설정, compile-only public API와 일반 application interface consumer fixture를 만든다.
+- [Issue #3](https://github.com/SanGyuk-Raccoon/dop-engine/issues/3): lint, baseline test, build, local pack consumer와 최소 권한 GitHub Actions를 하나의 `pnpm ci` gate로 연결한다.
+- M0에서는 runtime commit behavior와 npm publish를 구현하지 않는다. #2는 #1, #3은 #2가 완료된 뒤 시작한다.
 
 ## 17.2 v0.1 작업
-- [ ] DopData types와 runtime guard
-- [ ] reserved key·cycle 탐지
-- [ ] MemoryStateCell
-- [ ] ValidationResult·CommitResult
-- [ ] initial validation
-- [ ] fast-forward commit
-- [ ] update()와 reentrancy guard
-- [ ] revision과 committed result
-- [ ] 기본 unit/integration tests
+- unconstrained consumer generic을 유지하면서 모든 engine boundary에 runtime data guard를 구현한다.
+- descriptor, sparse array, cycle, reserved key와 지원하지 않는 native object를 거부한다.
+- 기본 `always` deep freeze, 명시적 `never`와 shared subtree cache를 구현한다.
+- schema-library-independent validator port와 initial validation을 구현한다.
 
-## 17.3 v0.2~v0.3 작업
-- [ ] Change/Path model
-- [ ] structural diff with reference fast path
-- [ ] safe patch application
-- [ ] path overlap detector
-- [ ] Conflict diagnostics
-- [ ] three-way reconciliation
-- [ ] candidate validation after merge
-- [ ] fast-check data arbitrary와 properties
+## 17.3 v0.2 작업
+- `MemoryStateCell.swap`, `get`, `update`와 `commit`을 구현한다.
+- fast-forward, validation context, Result와 exception hierarchy를 연결한다.
+- no-op의 `changed: false`, revision 유지와 event 억제를 검증한다.
+- invalid, exception과 stale abort에서 data와 revision을 보존한다.
 
-## 17.4 v0.4~v0.5 작업
-- [ ] deepFreeze policy
-- [ ] subscribe/unsubscribe
-- [ ] FIFO event dispatch
-- [ ] listener error hook
-- [ ] README quick start
-- [ ] browser async conflict example
-- [ ] npm pack consumer test
-- [ ] coverage and benchmark report
-- [ ] tag-based publish workflow
+## 17.4 v0.3 작업
+- `Change`/`Path`, structural diff, safe patch와 path overlap을 구현한다.
+- previous/current/next three-way reconciliation과 deterministic diagnostics를 구현한다.
+- 배열 atomic 및 parent/root conflict fixture를 추가한다.
+- identity, round-trip, preservation과 no-silent-overwrite property를 검증한다.
+
+## 17.5 v0.4 작업
+- `subscribe`/`unsubscribe`, FIFO event queue와 listener error hook을 구현한다.
+- state-changing commit만 event를 발생시키고 listener 내부 update 순서를 검증한다.
+- async stale commit example과 실제 Chromium browser smoke test를 추가한다.
+
+## 17.6 v0.5 작업
+- Node와 browser 독립 consumer fixture, declaration/source map 검증을 완성한다.
+- README conformance example, critical branch coverage와 benchmark baseline을 추가한다.
+- public release gate에 사용할 tarball allowlist, provenance와 trusted publishing 준비를 검증한다.
+
+## 17.7 v0.9와 v1.0-personal 작업
+- 서로 다른 browser-memory 앱 2개와 DB boundary 프로젝트에서 dogfood한다.
+- 두 번째 browser 앱 이후 core API 변경이 필요 없는지 확인한다.
+- 새 기능 없이 전체 회귀, 문서, changelog와 migration note를 정리한다.
+- 별도 공개 승인을 받은 뒤 MIT 전환, repository 공개, `@sangyuk-raccoon/dop-engine` publish와 release artifact 검증을 수행한다.
 
 # 18. 개인용 안정 버전 승인 기준
 ## 18.1 기능 승인
@@ -934,6 +1060,7 @@ v1.0 이전에는 절대 시간 threshold를 CI gate로 삼지 않는다. 동일
 - [ ] 배열 atomic 정책과 unsupported data 정책이 명확하게 오류 처리된다.
 - [ ] initial data와 final candidate validation이 누락되지 않는다.
 - [ ] conflict/invalid/exception에서 state와 revision이 보존된다.
+- [ ] no-op의 changed/revision/event와 기본 deep freeze 계약이 검증된다.
 
 ## 18.2 품질 승인
 - [ ] critical property tests가 CI에서 반복 실행된다.
@@ -954,6 +1081,7 @@ v1.0 이전에는 절대 시간 threshold를 CI gate로 삼지 않는다. 동일
 ## 18.4 Release 승인
 - [ ] CHANGELOG에 breaking change와 migration note가 기록되어 있다.
 - [ ] v1.0-personal tag가 immutable하게 생성된다.
+- [ ] 별도 public release 승인 후 repository 공개, MIT `LICENSE`와 package metadata 전환이 완료된다.
 - [ ] CI trusted publishing으로 npm package가 배포된다.
 - [ ] release tarball checksum/provenance를 확인한다.
 - [ ] 사용 중인 프로젝트가 exact 또는 controlled range로 version을 고정한다.
@@ -963,7 +1091,7 @@ v1.0 이전에는 절대 시간 threshold를 CI gate로 삼지 않는다. 동일
 |-----------------------|-------------------------------------|-----------------------------------------------------------------------|
 | 과도한 일반화         | framework화, 개발 지연              | non-goals와 ADR로 기능 추가를 거부하고 실제 반복 후만 추출            |
 | 배열 reconciliation   | false conflict 또는 잘못된 merge    | v1 atomic 정책, keyed strategy는 별도 실험                            |
-| mutation              | reference identity와 diff 신뢰 훼손 | readonly convention, development freeze, mutation tests               |
+| mutation              | reference identity와 diff 신뢰 훼손 | readonly convention, 기본 deep freeze, mutation tests                 |
 | large state traversal | UI latency                          | structural sharing, reference fast path, benchmark                    |
 | DB와 dual state       | 불일치와 data loss                  | DB가 source of truth일 때 global engine 금지                          |
 | public API churn      | 여러 프로젝트 업데이트 비용         | v0.x dogfood 후 v1 고정, export surface 최소화                        |
@@ -972,27 +1100,28 @@ v1.0 이전에는 절대 시간 threshold를 CI gate로 삼지 않는다. 동일
 | 저자 예제 과해석      | 철학과 구현의 혼동                  | 문서에서 author basis와 design decision 구분                          |
 
 # 20. Architecture Decision Records
-| **ID**  | **결정**                             | **상태** | **근거**                                                                           |
-|---------|--------------------------------------|----------|------------------------------------------------------------------------------------|
-| ADR-001 | TypeScript first                     | Accepted | 웹 application data와 직접 상호운용하고 초기 개발·검증 속도를 우선한다.            |
-| ADR-002 | Browser-memory first                 | Accepted | DOP Engine의 state/commit 효용이 가장 명확한 환경을 우선한다.                      |
-| ADR-003 | JSON-compatible data only            | Accepted | diff, validation, serialization, diagnostics의 의미를 안정화한다.                  |
-| ADR-004 | Reference identity as base version   | Accepted | 저자의 in-memory model과 structural sharing fast path를 보존한다.                  |
-| ADR-005 | Conservative path conflict           | Accepted | 자동 merge보다 data safety를 우선한다.                                             |
-| ADR-006 | Arrays are atomic in v1              | Accepted | index 의미와 reorder 문제를 domain 밖에서 일반화하지 않는다.                       |
-| ADR-007 | Sync calculation and validation only | Accepted | commit lifecycle과 retry semantics를 단순하고 결정적으로 유지한다.                 |
-| ADR-008 | DB transaction excluded              | Accepted | Prisma/DB와 책임 중복 및 dual source of truth를 방지한다.                          |
-| ADR-009 | Result for expected outcomes         | Accepted | conflict/invalid 처리를 호출자에게 명시한다.                                       |
-| ADR-010 | No custom resolver in v1             | Accepted | 도메인 의미가 core로 유입되는 것을 차단한다.                                       |
-| ADR-011 | ESM-only package                     | Accepted | 개인용 modern toolchain을 우선하고 dual package 복잡성을 피한다.                   |
-| ADR-012 | Rust/WASM deferred                   | Accepted | 실제 benchmark로 병목을 확인하기 전에는 경계 비용과 개발 복잡도를 추가하지 않는다. |
+저자의 네 원칙은 이 프로젝트가 승인하거나 대체할 선택지가 아니므로 ADR로 만들지 않는다. 아래 기록은 저자 자료가 정의하지 않은 엔진·플랫폼 결정만 다룬다. 전체 index와 상태 규칙은 [`docs/adr/README.md`](docs/adr/README.md)에 있다.
+
+| **ID**                                      | **결정**                                        | **상태** | **분류**   |
+|---------------------------------------------|-------------------------------------------------|----------|------------|
+| [ADR-001](docs/adr/0001-platform-and-module-boundary.md) | TypeScript, browser-memory first, ESM-only       | Accepted | Engine ADR |
+| [ADR-002](docs/adr/0002-runtime-generic-data-boundary.md) | Unconstrained generic + runtime data boundary    | Accepted | Engine ADR |
+| [ADR-003](docs/adr/0003-validation-context-and-errors.md) | Phase-aware synchronous validation contract      | Accepted | Engine ADR |
+| [ADR-004](docs/adr/0004-commit-result-revision-and-events.md) | Result, no-op, revision과 event 의미          | Accepted | Engine ADR |
+| [ADR-005](docs/adr/0005-default-deep-freeze.md) | Default always deep freeze                       | Accepted | Engine ADR |
+| [ADR-006](docs/adr/0006-conservative-three-way-reconciliation.md) | Conservative three-way reconciliation      | Accepted | Engine ADR |
+| [ADR-007](docs/adr/0007-atomic-arrays.md)   | Arrays are atomic in v1                         | Accepted | Engine ADR |
+| [ADR-008](docs/adr/0008-state-cell-and-concurrency-boundary.md) | State Cell swap와 concurrency boundary      | Accepted | Engine ADR |
+| [ADR-009](docs/adr/0009-db-transaction-boundary.md) | DB transaction excluded from engine          | Accepted | Engine ADR |
+| [ADR-010](docs/adr/0010-package-identity-and-publication.md) | Scoped package와 private-to-MIT release     | Accepted | Engine ADR |
+| [ADR-011](docs/adr/0011-deferred-optimizations.md) | Custom resolver와 Rust/WASM deferred            | Accepted | Engine ADR |
 
 # 21. 구현 작업 목록
 ## 21.1 P0 · 안정성 필수
 - [ ] Data guard와 reserved key 차단
 - [ ] State Cell과 revision
 - [ ] CommitResult / error hierarchy
-- [ ] Initial/final validation
+- [ ] Validation context와 initial/final validation
 - [ ] Fast-forward commit
 - [ ] Structural diff
 - [ ] Path overlap conflict
@@ -1003,7 +1132,7 @@ v1.0 이전에는 절대 시간 threshold를 CI gate로 삼지 않는다. 동일
 
 ## 21.2 P1 · 개인용 DX
 - [ ] update convenience API
-- [ ] development deepFreeze
+- [ ] 기본 always deepFreeze와 never opt-out
 - [ ] Conflict diagnostics
 - [ ] subscribe/unsubscribe
 - [ ] FIFO event queue
@@ -1034,7 +1163,7 @@ v1.0 이전에는 절대 시간 threshold를 CI gate로 삼지 않는다. 동일
 - [ ] 새 dependency가 있다면 필요성과 제거 대안 기록
 
 # 22. 참고 자료
-아래 자료는 설계의 근거와 개발 환경 선택을 확인하기 위해 사용했다. 웹 자료는 2026-08-26 확인 기준이다.
+아래 자료는 설계의 근거와 개발 환경 선택을 확인하기 위해 사용했다. 웹 자료는 2026-08-29 확인 기준이다.
 
 **[S1]** [Yehonathan Sharvit, “Principles of Data-Oriented Programming”](https://blog.klipse.tech/dop/2022/06/22/principles-of-dop.html) — DOP의 네 가지 원칙.
 
@@ -1058,6 +1187,10 @@ v1.0 이전에는 절대 시간 threshold를 CI gate로 삼지 않는다. 동일
 
 **[S11]** [pnpm Documentation](https://pnpm.io/) — package management와 lockfile.
 
+**[S12]** [npm package.json: private](https://docs.npmjs.com/cli/v11/configuring-npm/package-json/#private) — `private: true`의 accidental publish 차단.
+
+**[S13]** [Creating and publishing scoped public packages](https://docs.npmjs.com/creating-and-publishing-scoped-public-packages/) — user scope와 scoped public package의 access 설정.
+
 # 문서 종료
 > [!IMPORTANT] **다음 구현 기준**
-> 첫 구현은 M0 → v0.1 순서로 진행하고 reconciliation, observable, DB 관련 확장을 동시에 시작하지 않는다. v1.0-personal의 품질은 기능 수가 아니라 safety invariant와 실제 프로젝트 재사용으로 판단한다.
+> 첫 구현은 M0 #1 → #2 → #3 순서로 완료한 뒤 v0.1로 진행하고 reconciliation, observable, DB 관련 확장을 동시에 시작하지 않는다. v1.0-personal의 품질은 기능 수가 아니라 safety invariant와 실제 프로젝트 재사용으로 판단한다.
