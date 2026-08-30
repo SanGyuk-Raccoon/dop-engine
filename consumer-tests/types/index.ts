@@ -14,6 +14,8 @@ import type {
   ValidationContext,
   Validator,
 } from "@sangyuk-raccoon/dop-engine";
+// @ts-expect-error Internal package subpaths are intentionally not exported.
+import type { DopEngine as InternalDopEngine } from "@sangyuk-raccoon/dop-engine/api/types";
 
 interface TodoItem {
   readonly id: string;
@@ -31,8 +33,7 @@ interface Preferences {
 }
 
 type Selection =
-  | { readonly kind: "none" }
-  | { readonly kind: "todo"; readonly id: string };
+  { readonly kind: "none" } | { readonly kind: "todo"; readonly id: string };
 
 interface ApplicationState {
   readonly board: Board;
@@ -100,8 +101,7 @@ if (result.status === "committed") {
   void [changed, data];
 } else if (result.status === "conflict") {
   const firstConflict = result.conflicts[0];
-  const relation: "same" | "ancestor" | "descendant" =
-    firstConflict.relation;
+  const relation: "same" | "ancestor" | "descendant" = firstConflict.relation;
   void relation;
 } else {
   const firstIssue = result.issues[0];
@@ -138,7 +138,4 @@ const errorValues: readonly Error[] = [
 
 void [options, factory, unsubscribe, preservedCause, errorValues];
 
-// @ts-expect-error Internal package subpaths are intentionally not exported.
-type InternalEngine = import("@sangyuk-raccoon/dop-engine/api/types").DopEngine<ApplicationState>;
-
-type _InternalEngineMustRemainUnavailable = InternalEngine;
+type _InternalEngineMustRemainUnavailable = InternalDopEngine<ApplicationState>;

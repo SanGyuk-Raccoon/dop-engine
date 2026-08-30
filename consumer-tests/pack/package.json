@@ -1,0 +1,6 @@
+{
+  "name": "dop-engine-pack-consumer",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module"
+}
