@@ -3,15 +3,17 @@ import { describe, expect, it, vi } from "vitest";
 import { DopDataError, EngineExecutionError } from "../../src/api/errors.js";
 import type { ValidationContext, Validator } from "../../src/api/types.js";
 import { createDeepFreezer } from "../../src/data/create-deep-freezer.js";
-import { createFastForwardCommit } from "../../src/engine/commit.js";
+import { createCommit } from "../../src/engine/commit.js";
 import { MemoryStateCell } from "../../src/state/memory-state-cell.js";
 
 interface TestData {
   readonly marker: string;
+  readonly currentOnly?: string;
   readonly nested?: readonly { readonly value: string }[];
+  readonly profile?: { readonly name: string };
 }
 
-describe("createFastForwardCommit", () => {
+describe("createCommit", () => {
   it("installs the exact frozen next reference and increments the revision once", () => {
     const previous: TestData = {
       marker: "previous",
@@ -47,11 +49,11 @@ describe("createFastForwardCommit", () => {
         return { ok: true } as const;
       },
     );
-    const commit = createFastForwardCommit(stateCell, freeze, validator);
+    const commit = createCommit(stateCell, freeze, validator);
 
     const result = commit(previous, next);
 
-    expect(frozenValues).toEqual([previous, next]);
+    expect(frozenValues).toEqual([previous, next, next]);
     expect(swap).toHaveBeenCalledTimes(1);
     expect(validator).toHaveBeenCalledTimes(1);
     expect(result).toEqual({
@@ -79,7 +81,7 @@ describe("createFastForwardCommit", () => {
       expect(Object.isFrozen(candidate)).toBe(false);
       return { ok: true };
     };
-    const commit = createFastForwardCommit(
+    const commit = createCommit(
       stateCell,
       createDeepFreezer("never"),
       validator,
@@ -108,7 +110,7 @@ describe("createFastForwardCommit", () => {
       },
     ] as const;
     const validator: Validator<TestData> = () => ({ ok: false, issues });
-    const commit = createFastForwardCommit(stateCell, freeze, validator);
+    const commit = createCommit(stateCell, freeze, validator);
 
     const result = commit(previous, next);
 
@@ -131,7 +133,7 @@ describe("createFastForwardCommit", () => {
     const stateCell = new MemoryStateCell(current);
     const currentState = stateCell.get();
     const validator = vi.fn<Validator<TestData>>(() => ({ ok: true }));
-    const commit = createFastForwardCommit(stateCell, freeze, validator);
+    const commit = createCommit(stateCell, freeze, validator);
 
     const result = commit(current, current);
 
@@ -152,39 +154,216 @@ describe("createFastForwardCommit", () => {
     expect(stateCell.get().revision).toBe(0);
   });
 
-  it("returns an internal stale result after guarding and freezing both inputs", () => {
-    const current: TestData = { marker: "current" };
+  it("commits an independently merged stale candidate", () => {
+    const nested = [{ value: "shared" }] as const;
     const previous: TestData = {
-      marker: "stale",
-      nested: [{ value: "old" }],
+      marker: "previous",
+      nested,
+    };
+    const current: TestData = {
+      marker: "previous",
+      currentOnly: "preserved",
+      nested,
     };
     const next: TestData = {
       marker: "next",
-      nested: [{ value: "new" }],
+      nested,
+    };
+    const freezeValue = createDeepFreezer();
+    freezeValue(current);
+    const frozenValues: unknown[] = [];
+    const freeze = <Value>(value: Value): Value => {
+      frozenValues.push(value);
+      return freezeValue(value);
+    };
+    const stateCell = new MemoryStateCell(current);
+    const currentState = stateCell.get();
+    const validator = vi.fn(
+      (candidate: TestData, context: ValidationContext<TestData>) => {
+        expect(candidate).toEqual({
+          marker: "next",
+          currentOnly: "preserved",
+          nested,
+        });
+        expect(candidate).not.toBe(current);
+        expect(candidate).not.toBe(next);
+        expect(Object.isFrozen(candidate)).toBe(true);
+        expect(context).toEqual({
+          phase: "commit",
+          previous,
+          current,
+          merged: true,
+        });
+        return { ok: true } as const;
+      },
+    );
+    const commit = createCommit(stateCell, freeze, validator);
+
+    const result = commit(previous, next);
+
+    expect(result).toEqual({
+      status: "committed",
+      data: {
+        marker: "next",
+        currentOnly: "preserved",
+        nested,
+      },
+      revision: 1,
+      changed: true,
+      merged: true,
+    });
+    if (result.status !== "committed") {
+      throw new Error("Expected a committed result.");
+    }
+    expect(frozenValues).toEqual([previous, next, result.data]);
+    expect(validator).toHaveBeenCalledTimes(1);
+    expect(Object.isFrozen(previous)).toBe(true);
+    expect(Object.isFrozen(next)).toBe(true);
+    expect(result.data.nested).toBe(nested);
+    expect(stateCell.get()).not.toBe(currentState);
+    expect(stateCell.get().data).toBe(result.data);
+    expect(stateCell.get().revision).toBe(1);
+  });
+
+  it("validates a stale current-only candidate as an exact no-op", () => {
+    const previous: TestData = { marker: "previous" };
+    const current: TestData = { marker: "current" };
+    const freeze = createDeepFreezer();
+    freeze(current);
+    const stateCell = new MemoryStateCell(current);
+    const currentState = stateCell.get();
+    const validator = vi.fn(
+      (candidate: TestData, context: ValidationContext<TestData>) => {
+        expect(candidate).toBe(current);
+        expect(context).toEqual({
+          phase: "commit",
+          previous,
+          current,
+          merged: false,
+        });
+        return { ok: true } as const;
+      },
+    );
+    const commit = createCommit(stateCell, freeze, validator);
+
+    const result = commit(previous, previous);
+
+    expect(result).toEqual({
+      status: "committed",
+      data: current,
+      revision: 0,
+      changed: false,
+      merged: false,
+    });
+    expect(validator).toHaveBeenCalledTimes(1);
+    expect(stateCell.get()).toBe(currentState);
+  });
+
+  it("returns deterministic public conflicts without validating a candidate", () => {
+    const previous: TestData = {
+      marker: "previous",
+      nested: [{ value: "previous" }],
+      profile: { name: "Ada" },
+    };
+    const current: TestData = {
+      marker: "current",
+      nested: [{ value: "current" }],
+    };
+    const next: TestData = {
+      marker: "next",
+      nested: [{ value: "next" }],
+      profile: { name: "Grace" },
     };
     const freeze = createDeepFreezer();
     freeze(current);
     const stateCell = new MemoryStateCell(current);
     const currentState = stateCell.get();
     const validator = vi.fn<Validator<TestData>>(() => ({ ok: true }));
-    const commit = createFastForwardCommit(stateCell, freeze, validator);
+    const commit = createCommit(stateCell, freeze, validator);
 
     const result = commit(previous, next);
 
     expect(result).toEqual({
-      status: "stale",
+      status: "conflict",
       current,
       revision: 0,
+      conflicts: [
+        {
+          currentPath: ["marker"],
+          nextPath: ["marker"],
+          relation: "same",
+          currentOperation: "replace",
+          nextOperation: "replace",
+        },
+        {
+          currentPath: ["nested"],
+          nextPath: ["nested"],
+          relation: "same",
+          currentOperation: "replace",
+          nextOperation: "replace",
+        },
+        {
+          currentPath: ["profile"],
+          nextPath: ["profile", "name"],
+          relation: "ancestor",
+          currentOperation: "remove",
+          nextOperation: "replace",
+        },
+      ],
     });
-    if (result.status !== "stale") {
-      throw new Error("Expected stale result.");
+    if (result.status !== "conflict") {
+      throw new Error("Expected a conflict result.");
     }
     expect(result.current).toBe(current);
     expect(validator).not.toHaveBeenCalled();
     expect(Object.isFrozen(previous)).toBe(true);
-    expect(Object.isFrozen(previous.nested)).toBe(true);
     expect(Object.isFrozen(next)).toBe(true);
-    expect(Object.isFrozen(next.nested)).toBe(true);
+    expect(stateCell.get()).toBe(currentState);
+  });
+
+  it("preserves state when validation rejects a merged candidate", () => {
+    const previous: TestData = { marker: "previous" };
+    const current: TestData = {
+      marker: "previous",
+      currentOnly: "preserved",
+    };
+    const next: TestData = { marker: "next" };
+    const freeze = createDeepFreezer();
+    freeze(current);
+    const stateCell = new MemoryStateCell(current);
+    const currentState = stateCell.get();
+    const issues = [
+      { code: "invalid-merge", message: "Merged data is invalid." },
+    ] as const;
+    let observedCandidate: TestData | undefined;
+    const validator = vi.fn(
+      (candidate: TestData, context: ValidationContext<TestData>) => {
+        observedCandidate = candidate;
+        expect(context).toEqual({
+          phase: "commit",
+          previous,
+          current,
+          merged: true,
+        });
+        return { ok: false, issues } as const;
+      },
+    );
+    const commit = createCommit(stateCell, freeze, validator);
+
+    const result = commit(previous, next);
+
+    expect(result).toEqual({
+      status: "invalid",
+      current,
+      revision: 0,
+      issues,
+    });
+    expect(validator).toHaveBeenCalledTimes(1);
+    expect(observedCandidate).toEqual({
+      marker: "next",
+      currentOnly: "preserved",
+    });
+    expect(Object.isFrozen(observedCandidate)).toBe(true);
     expect(stateCell.get()).toBe(currentState);
   });
 
@@ -194,7 +373,7 @@ describe("createFastForwardCommit", () => {
     const currentState = stateCell.get();
     const previous = { marker: undefined } as unknown as TestData;
     const next: TestData = { marker: "next" };
-    const commit = createFastForwardCommit(stateCell, createDeepFreezer());
+    const commit = createCommit(stateCell, createDeepFreezer());
 
     const error = captureError(() => commit(previous, next));
 
@@ -209,11 +388,7 @@ describe("createFastForwardCommit", () => {
     const previous: TestData = { marker: "stale" };
     const next = { marker: Number.NaN } as unknown as TestData;
     const validator = vi.fn<Validator<TestData>>(() => ({ ok: true }));
-    const commit = createFastForwardCommit(
-      stateCell,
-      createDeepFreezer(),
-      validator,
-    );
+    const commit = createCommit(stateCell, createDeepFreezer(), validator);
 
     const error = captureError(() => commit(previous, next));
 
@@ -235,7 +410,7 @@ describe("createFastForwardCommit", () => {
         },
       },
     );
-    const commit = createFastForwardCommit(stateCell, createDeepFreezer());
+    const commit = createCommit(stateCell, createDeepFreezer());
 
     const error = captureError(() => commit(previous, next));
 
@@ -249,6 +424,37 @@ describe("createFastForwardCommit", () => {
     expect(stateCell.get().revision).toBe(0);
   });
 
+  it("preserves state when final candidate freezing fails", () => {
+    const previous: TestData = { marker: "previous" };
+    const current: TestData = {
+      marker: "previous",
+      currentOnly: "preserved",
+    };
+    const next: TestData = { marker: "next" };
+    const stateCell = new MemoryStateCell(current);
+    const currentState = stateCell.get();
+    const cause = new Error("candidate freeze failed");
+    let freezeCalls = 0;
+    const freeze = <Value>(value: Value): Value => {
+      freezeCalls += 1;
+      if (freezeCalls === 3) {
+        throw cause;
+      }
+      return value;
+    };
+    const validator = vi.fn<Validator<TestData>>(() => ({ ok: true }));
+    const commit = createCommit(stateCell, freeze, validator);
+
+    const error = captureError(() => commit(previous, next));
+
+    expect(error).toBe(cause);
+    expect(freezeCalls).toBe(3);
+    expect(validator).not.toHaveBeenCalled();
+    expect(stateCell.get()).toBe(currentState);
+    expect(stateCell.get().data).toBe(current);
+    expect(stateCell.get().revision).toBe(0);
+  });
+
   it("preserves state when the validator throws and retains the cause", () => {
     const previous: TestData = { marker: "current" };
     const next: TestData = { marker: "next" };
@@ -258,11 +464,7 @@ describe("createFastForwardCommit", () => {
     const validator: Validator<TestData> = () => {
       throw cause;
     };
-    const commit = createFastForwardCommit(
-      stateCell,
-      createDeepFreezer(),
-      validator,
-    );
+    const commit = createCommit(stateCell, createDeepFreezer(), validator);
 
     const error = captureError(() => commit(previous, next));
 
@@ -283,11 +485,7 @@ describe("createFastForwardCommit", () => {
     const currentState = stateCell.get();
     const validator = (() =>
       Promise.resolve({ ok: true })) as unknown as Validator<TestData>;
-    const commit = createFastForwardCommit(
-      stateCell,
-      createDeepFreezer(),
-      validator,
-    );
+    const commit = createCommit(stateCell, createDeepFreezer(), validator);
 
     const error = captureError(() => commit(previous, next));
 
@@ -309,7 +507,7 @@ describe("createFastForwardCommit", () => {
     freeze(initial);
     const stateCell = new MemoryStateCell(initial);
     const validator = vi.fn<Validator<TestData>>(() => ({ ok: true }));
-    const commit = createFastForwardCommit(stateCell, freeze, validator);
+    const commit = createCommit(stateCell, freeze, validator);
 
     const firstResult = commit(initial, first);
     const firstState = stateCell.get();

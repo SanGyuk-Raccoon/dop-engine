@@ -1,53 +1,51 @@
-import type {
-  CommittedResult,
-  InvalidResult,
-  Validator,
-} from "../api/types.js";
+import type { CommitResult, DopData, Validator } from "../api/types.js";
+import { reconcileDopData } from "../consistency/reconcile.js";
 import { assertDopData } from "../data/assert-dop-data.js";
 import type { StateCell, VersionedState } from "../state/memory-state-cell.js";
 import { runValidator } from "../validation/run-validator.js";
 
-export interface StaleCommitResult<T> {
-  readonly status: "stale";
-  readonly current: T;
-  readonly revision: number;
-}
-
-export type FastForwardCommitResult<T> =
-  CommittedResult<T> | InvalidResult<T> | StaleCommitResult<T>;
-
-export function createFastForwardCommit<T>(
+export function createCommit<T>(
   stateCell: StateCell<T>,
   freeze: <Value>(value: Value) => Value,
   validator?: Validator<T>,
-): (previous: T, next: T) => FastForwardCommitResult<T> {
+): (previous: T, next: T) => CommitResult<T> {
   return (previous, next) => {
     assertDopData(previous);
     freeze(previous);
     assertDopData(next);
     freeze(next);
 
-    let result!: FastForwardCommitResult<T>;
+    let result!: CommitResult<T>;
 
     stateCell.swap((currentState) => {
       const current = currentState.data;
+      const reconciliation = reconcileDopData(
+        current as unknown as DopData,
+        previous,
+        next,
+      );
 
-      if (!Object.is(current, previous)) {
+      if (reconciliation.status === "conflict") {
         result = {
-          status: "stale",
+          status: "conflict",
           current,
           revision: currentState.revision,
+          conflicts: reconciliation.conflicts,
         };
         return currentState;
       }
 
+      const candidate = reconciliation.candidate as T;
+      assertDopData(candidate);
+      freeze(candidate);
+
       const issues = runValidator(
-        next,
+        candidate,
         {
           phase: "commit",
           previous,
           current,
-          merged: false,
+          merged: reconciliation.merged,
         },
         validator,
       );
@@ -62,7 +60,7 @@ export function createFastForwardCommit<T>(
         return currentState;
       }
 
-      if (Object.is(next, current)) {
+      if (Object.is(candidate, current)) {
         result = {
           status: "committed",
           data: current,
@@ -74,16 +72,16 @@ export function createFastForwardCommit<T>(
       }
 
       const nextState: VersionedState<T> = {
-        data: next,
+        data: candidate,
         revision: currentState.revision + 1,
       };
 
       result = {
         status: "committed",
-        data: next,
+        data: candidate,
         revision: nextState.revision,
         changed: true,
-        merged: false,
+        merged: reconciliation.merged,
       };
       return nextState;
     });
