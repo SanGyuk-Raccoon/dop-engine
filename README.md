@@ -1,39 +1,88 @@
 # DOP Engine
 
-개인 프로젝트에서 재사용하기 위한 private TypeScript ESM 라이브러리다. immutable data의 validation과 commit 경계를 제공하는 것을 목표로 한다.
-
-현재 M0에서는 public type과 package 경계만 준비되어 있다. `createDopEngine`의 runtime 구현은 후속 작업 전까지 placeholder 오류를 던진다.
+개인 프로젝트에서 재사용하기 위한 private TypeScript ESM 라이브러리다. 브라우저 main thread의 immutable application data를 검증하고, stale update를 보수적으로 조정한 뒤 commit하고 구독자에게 알린다.
 
 ## 사용 범위
 
-- 브라우저 메모리 기반 애플리케이션이 주 대상이다.
+- 브라우저 main thread와 하나의 JavaScript isolate에서 사용하는 메모리 엔진이다.
+- calculation과 validator는 동기 함수여야 한다. 비동기 작업은 `get()`으로 base를 보존한 뒤 `commit(previous, next)`으로 연결한다.
 - Node.js에서는 테스트와 단일 프로세스 메모리 사용만 고려한다.
-- 공개 npm 배포, 범용 프레임워크와 DB transaction 대체는 목표가 아니다.
+- DB transaction, 여러 Worker·프로세스 사이의 원자성, 범용 상태 관리 framework를 제공하지 않는다.
+- package는 `UNLICENSED` private package이며 public registry에 게시하지 않는다.
+
+## 기본 사용
+
+이 package는 public registry에 게시하지 않으므로 빌드한 tarball 또는 workspace package로 연결한다. 브라우저 TypeScript 애플리케이션의 bundler는 package root ESM import를 resolve해야 한다.
 
 ```ts
 import { createDopEngine } from "@sangyuk-raccoon/dop-engine";
-import type { DopEngineOptions } from "@sangyuk-raccoon/dop-engine";
 
 interface State {
   readonly value: string;
+  readonly saved: boolean;
 }
 
-const options: DopEngineOptions<State> = {
-  initialData: { value: "initial" },
-};
+const engine = createDopEngine<State>({
+  initialData: { value: "initial", saved: true },
+  validate: (candidate) =>
+    candidate.value.length > 0
+      ? { ok: true }
+      : {
+          ok: false,
+          issues: [
+            {
+              code: "empty-value",
+              message: "value는 비어 있을 수 없습니다.",
+              path: ["value"],
+            },
+          ],
+        },
+});
 
-const engine = createDopEngine(options);
+const unsubscribe = engine.subscribe(({ current }) => {
+  render(current);
+});
+
+const result = engine.update((current) => ({
+  ...current,
+  value: "next",
+  saved: false,
+}));
+
+if (result.status === "invalid") {
+  showValidation(result.issues);
+}
+
+unsubscribe();
 ```
+
+기본 `freeze: "always"`는 지원되는 object와 array를 clone 없이 깊게 동결한다. `freeze: "never"`는 측정된 비용 때문에 runtime enforcement를 끌 때만 사용하며 mutation을 허용한다는 의미가 아니다.
+
+## 비동기 stale update
+
+`update()`에 async 함수를 전달하지 않는다. I/O 전에 읽은 reference를 `previous`로 보존하고, 응답으로 계산한 `next`를 명시적으로 commit한다.
+
+```ts
+const previous = engine.get();
+const suggestion = await fetchSuggestion();
+const next = applySuggestion(previous, suggestion);
+const result = engine.commit(previous, next);
+
+if (result.status === "conflict") {
+  showConflict(result.conflicts);
+}
+```
+
+현재 state가 그 사이 바뀌었더라도 변경 path가 독립적이면 병합하고, 같은 path나 ancestor/descendant가 겹치면 current state를 유지한 `conflict`를 반환한다.
 
 ## 개발
 
-Node `24.20.0`과 pnpm `11.23.0`을 사용한다.
+Node `24.20.0`과 pnpm `11.23.0`을 사용한다. 최초 실행이나 Playwright version 변경 뒤에는 version-matched Chromium headless shell을 준비한다.
 
 ```sh
 pnpm ci
+pnpm run browser:install
 pnpm run verify
 ```
 
-개별 package boundary를 다시 확인하려면 `pnpm run pack:check`를 실행한다. tarball은 OS 임시 directory에서만 생성·설치되며 repository에는 남지 않는다.
-
-이 저장소는 `UNLICENSED` private package이며 public registry에 게시하지 않는다.
+`pnpm run verify`는 lint, typecheck, build, unit/property test, tarball consumer와 실제 Chromium native ESM smoke를 실행한다. 개별 package boundary는 `pnpm run pack:check`, browser 동작은 `pnpm run browser:check`로 다시 확인할 수 있다.

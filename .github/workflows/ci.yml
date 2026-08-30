@@ -25,5 +25,7 @@ jobs:
         run: corepack prepare pnpm@11.23.0 --activate
       - name: Install dependencies
         run: pnpm ci
+      - name: Install Chromium
+        run: pnpm run browser:install:ci
       - name: Verify library
         run: pnpm run verify
