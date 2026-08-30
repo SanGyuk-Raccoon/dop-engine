@@ -1,0 +1,7 @@
+ARCHITECTURE.md
+docs/
+node_modules/
+dist/
+coverage/
+*.tgz
+pnpm-lock.yaml

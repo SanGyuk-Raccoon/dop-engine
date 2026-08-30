@@ -1,9 +1,7 @@
 export type DopPrimitive = null | boolean | number | string;
 
 export type DopData =
-  | DopPrimitive
-  | readonly DopData[]
-  | { readonly [key: string]: DopData };
+  DopPrimitive | readonly DopData[] | { readonly [key: string]: DopData };
 
 export type FreezePolicy = "always" | "never";
 
@@ -65,9 +63,7 @@ export interface InvalidResult<T> {
 }
 
 export type CommitResult<T> =
-  | CommittedResult<T>
-  | ConflictResult<T>
-  | InvalidResult<T>;
+  CommittedResult<T> | ConflictResult<T> | InvalidResult<T>;
 
 export interface CommitEvent<T> {
   readonly previous: T;
