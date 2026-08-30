@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="data:," />
+    <title>DOP Engine browser smoke</title>
+  </head>
+  <body>
+    <script type="module">
+      const resultKey = "__DOP_BROWSER_CHECK__";
+
+      try {
+        assert(
+          typeof globalThis.process === "undefined",
+          "Node process leaked into the browser realm.",
+        );
+        assert(
+          typeof globalThis.Buffer === "undefined",
+          "Node Buffer leaked into the browser realm.",
+        );
+
+        const { createDopEngine } = await import("/package/index.js");
+        const initial = {
+          left: "base-left",
+          right: "base-right",
+          version: 0,
+          nested: { label: "shared" },
+        };
+        const events = [];
+        const engine = createDopEngine({ initialData: initial });
+        const unsubscribe = engine.subscribe((event) => events.push(event));
+
+        assert(
+          engine.get() === initial,
+          "get() changed the initial reference.",
+        );
+        assert(Object.isFrozen(initial), "Initial data was not frozen.");
+        assert(
+          Object.isFrozen(initial.nested),
+          "Nested initial data was not frozen.",
+        );
+
+        let calculationInput;
+        const firstResult = engine.update((current) => {
+          calculationInput = current;
+          return { ...current, left: "current-left", version: 1 };
+        });
+
+        assert(
+          calculationInput === initial,
+          "update() did not receive the exact current reference.",
+        );
+        assertCommitted(firstResult, 1, false);
+
+        const first = firstResult.data;
+        const staleNext = { ...initial, right: "next-right" };
+        const mergedResult = engine.commit(initial, staleNext);
+
+        assertCommitted(mergedResult, 2, true);
+        assert(
+          mergedResult.data.left === "current-left" &&
+            mergedResult.data.right === "next-right" &&
+            mergedResult.data.version === 1,
+          "Stale independent changes were not preserved.",
+        );
+        assert(
+          Object.isFrozen(mergedResult.data),
+          "Merged candidate was not frozen.",
+        );
+        assert(events.length === 2, "Unexpected commit event count.");
+        assert(
+          events[0].previous === initial && events[0].current === first,
+          "First event references were not exact.",
+        );
+        assert(
+          events[0].revision === 1 && events[0].merged === false,
+          "First event diagnostics were incorrect.",
+        );
+        assert(
+          events[1].previous === first &&
+            events[1].current === mergedResult.data,
+          "Merged event references were not exact.",
+        );
+        assert(
+          events[1].revision === 2 && events[1].merged === true,
+          "Merged event diagnostics were incorrect.",
+        );
+
+        unsubscribe();
+        const finalResult = engine.update((current) => ({
+          ...current,
+          version: 2,
+        }));
+        assertCommitted(finalResult, 3, false);
+        assert(events.length === 2, "Unsubscribe did not stop notification.");
+
+        globalThis[resultKey] = {
+          status: "passed",
+          revision: finalResult.revision,
+          eventCount: events.length,
+        };
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Unknown browser error.";
+        globalThis[resultKey] = { status: "failed", message };
+        console.error(error);
+      }
+
+      function assert(condition, message) {
+        if (!condition) {
+          throw new Error(message);
+        }
+      }
+
+      function assertCommitted(result, revision, merged) {
+        assert(result.status === "committed", "Commit did not succeed.");
+        assert(result.changed === true, "Commit did not report a change.");
+        assert(result.revision === revision, "Commit revision was incorrect.");
+        assert(result.merged === merged, "Commit merged flag was incorrect.");
+      }
+    </script>
+  </body>
+</html>
