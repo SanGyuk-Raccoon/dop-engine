@@ -1,0 +1,65 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Immutable release tag, for example v0.4.0
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.tag }}
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+          registry-url: https://registry.npmjs.org
+      - name: Validate release tag
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from "node:fs";
+
+          const { version } = JSON.parse(readFileSync("package.json", "utf8"));
+          const expectedTag = `v${version}`;
+
+          if (process.env.RELEASE_TAG !== expectedTag) {
+            throw new Error(
+              `Release tag ${process.env.RELEASE_TAG} does not match ${expectedTag}.`,
+            );
+          }
+          NODE
+          test "$(git rev-parse HEAD)" = "$(git rev-list -n 1 "refs/tags/${RELEASE_TAG}")"
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Activate pnpm
+        run: corepack prepare pnpm@11.23.0 --activate
+      - name: Install dependencies
+        run: pnpm ci
+      - name: Install Chromium
+        run: pnpm run browser:install:ci
+      - name: Verify package
+        run: pnpm run verify
+      - name: Publish package
+        run: npm publish

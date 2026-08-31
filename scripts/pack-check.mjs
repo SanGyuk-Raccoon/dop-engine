@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { cp, mkdtemp, readdir, realpath, rm } from "node:fs/promises";
+import { cp, mkdtemp, readFile, readdir, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +9,17 @@ const fixtureRoot = join(repositoryRoot, "consumer-tests", "pack");
 const temporaryBase = await realpath(tmpdir());
 const pnpmCli = process.env.npm_execpath;
 const maximumOutputLength = 1_000_000;
+const packageManifestPath = join(repositoryRoot, "package.json");
+const expectedPackageName = "@sangyuk-raccoon/dop-engine";
+const expectedRepository = {
+  type: "git",
+  url: "git+https://github.com/SanGyuk-Raccoon/dop-engine.git",
+};
+const expectedPublishConfig = {
+  access: "public",
+  registry: "https://registry.npmjs.org/",
+};
+const releaseVersionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
 if (typeof pnpmCli !== "string" || !isAbsolute(pnpmCli)) {
   throw new Error("pack:check must run through the pinned pnpm executable.");
@@ -89,6 +100,53 @@ function parsePackResult(stdout) {
   return results[0];
 }
 
+function verifyPublishManifest(manifest, label) {
+  if (manifest?.name !== expectedPackageName) {
+    throw new Error(`${label} has an unexpected package name.`);
+  }
+
+  if (
+    typeof manifest.version !== "string" ||
+    !releaseVersionPattern.test(manifest.version) ||
+    manifest.version === "0.0.0"
+  ) {
+    throw new Error(`${label} must have a non-zero release version.`);
+  }
+
+  if (Object.hasOwn(manifest, "private")) {
+    throw new Error(`${label} must not contain the private publish guard.`);
+  }
+
+  if (manifest.license !== "MIT") {
+    throw new Error(`${label} must use the MIT license.`);
+  }
+
+  if (
+    JSON.stringify(manifest.repository) !== JSON.stringify(expectedRepository)
+  ) {
+    throw new Error(`${label} has an unexpected repository.`);
+  }
+
+  if (
+    JSON.stringify(manifest.publishConfig) !==
+    JSON.stringify(expectedPublishConfig)
+  ) {
+    throw new Error(`${label} has an unexpected publishConfig.`);
+  }
+
+  if (manifest.dependencies !== undefined) {
+    throw new Error(`${label} must not contain runtime dependencies.`);
+  }
+
+  if (
+    manifest.type !== "module" ||
+    manifest.sideEffects !== false ||
+    JSON.stringify(manifest.files) !== JSON.stringify(["dist"])
+  ) {
+    throw new Error(`${label} changed the ESM package boundary.`);
+  }
+}
+
 function toArchivePath(path) {
   const normalized = path.replaceAll("\\", "/").replace(/^\.\//, "");
   return normalized.startsWith("package/")
@@ -132,6 +190,11 @@ function verifyPackedFiles(files) {
 let temporaryRoot;
 
 try {
+  const sourceManifest = JSON.parse(
+    await readFile(packageManifestPath, "utf8"),
+  );
+  verifyPublishManifest(sourceManifest, "source package.json");
+
   temporaryRoot = await mkdtemp(join(temporaryBase, "dop-engine-pack-"));
   temporaryRoot = await realpath(temporaryRoot);
   assertSafeTemporaryDirectory(temporaryRoot);
@@ -142,6 +205,12 @@ try {
     "pnpm pack",
   );
   const packResult = parsePackResult(stdout);
+  if (
+    packResult.name !== sourceManifest.name ||
+    packResult.version !== sourceManifest.version
+  ) {
+    throw new Error("pnpm pack name/version does not match package.json.");
+  }
   verifyPackedFiles(packResult.files);
 
   const tarballNames = (await readdir(temporaryRoot, { withFileTypes: true }))
@@ -161,6 +230,24 @@ try {
     consumerRoot,
     "tarball installation",
   );
+  const installedManifest = JSON.parse(
+    await readFile(
+      join(
+        consumerRoot,
+        "node_modules",
+        "@sangyuk-raccoon",
+        "dop-engine",
+        "package.json",
+      ),
+      "utf8",
+    ),
+  );
+  verifyPublishManifest(installedManifest, "packed package.json");
+  if (installedManifest.version !== sourceManifest.version) {
+    throw new Error(
+      "Packed package version does not match source package.json.",
+    );
+  }
 
   await run(
     process.execPath,
