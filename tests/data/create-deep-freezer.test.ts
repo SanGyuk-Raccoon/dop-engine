@@ -102,6 +102,25 @@ describe("createDeepFreezer", () => {
     expect(Object.isFrozen(child)).toBe(true);
   });
 
+  it("wraps a cycle encountered before the runtime data guard", () => {
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    let captured: unknown;
+
+    try {
+      createDeepFreezer()(cyclic);
+    } catch (error) {
+      captured = error;
+    }
+
+    expect(captured).toBeInstanceOf(EngineExecutionError);
+    if (!(captured instanceof EngineExecutionError)) {
+      throw new Error("Expected EngineExecutionError.");
+    }
+    expect(captured.cause).toBeInstanceOf(Error);
+    expect(Object.isFrozen(cyclic)).toBe(false);
+  });
+
   it("preserves the cause and does not cache an object after freeze failure", () => {
     const cause = new Error("prevent extensions failed");
     let shouldFail = true;

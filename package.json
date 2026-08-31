@@ -49,13 +49,15 @@
     "typecheck:consumer": "tsc --project consumer-tests/types/tsconfig.json",
     "typecheck:test": "tsc --project tsconfig.test.json",
     "test:built": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:property": "vitest run tests/property",
     "test": "pnpm run build && pnpm run test:built",
     "pack:check:built": "node scripts/pack-check.mjs",
     "pack:check": "pnpm run build && pnpm run pack:check:built",
-    "verify": "pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run build && pnpm run typecheck:consumer && pnpm run typecheck:test && pnpm run test:built && pnpm run pack:check:built && pnpm run browser:check:built"
+    "verify": "pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run build && pnpm run typecheck:consumer && pnpm run typecheck:test && pnpm run test:coverage && pnpm run pack:check:built && pnpm run browser:check:built"
   },
   "devDependencies": {
+    "@vitest/coverage-v8": "4.1.11",
     "fast-check": "4.9.0",
     "oxlint": "1.80.0",
     "playwright": "1.62.1",

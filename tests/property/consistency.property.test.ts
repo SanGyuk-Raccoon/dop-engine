@@ -1,11 +1,13 @@
 import * as fc from "fast-check";
 import { describe, expect, it } from "vitest";
 
-import type { DopData } from "../../src/api/types.js";
+import { DopDataError } from "../../src/api/errors.js";
+import type { DopData, ValidationIssue } from "../../src/api/types.js";
 import { applyChanges } from "../../src/consistency/apply.js";
 import { diffDopData } from "../../src/consistency/diff.js";
 import { reconcileDopData } from "../../src/consistency/reconcile.js";
 import { assertDopData } from "../../src/data/assert-dop-data.js";
+import { createDopEngine } from "../../src/engine/create-engine.js";
 
 const reservedKeys = new Set(["__proto__", "prototype", "constructor"]);
 const safeKeyArbitrary = fc
@@ -33,6 +35,30 @@ const dopDataMemo: fc.Memo<DopData> = fc.memo((maxDepth) => {
 });
 const dopDataArbitrary = dopDataMemo(6);
 const pathArbitrary = fc.array(safeKeyArbitrary, { maxLength: 5 });
+const unsupportedLeafArbitrary: fc.Arbitrary<unknown> = fc.oneof(
+  fc.constant(undefined),
+  fc.constant(Number.NaN),
+  fc.constant(Number.POSITIVE_INFINITY),
+  fc.constant(1n),
+  fc.constant(Symbol("unsupported")),
+  fc.constant(() => undefined),
+);
+const unsupportedDataArbitrary: fc.Arbitrary<unknown> = fc.oneof(
+  fc
+    .tuple(pathArbitrary, unsupportedLeafArbitrary)
+    .map(([path, leaf]) => unknownValueAtPath(path, leaf)),
+  fc.constantFrom(...reservedKeys).map((key) =>
+    Object.defineProperty({}, key, {
+      enumerable: true,
+      value: "blocked",
+    }),
+  ),
+  fc.integer({ min: 1, max: 8 }).map((length) => {
+    const sparse: unknown[] = [];
+    sparse.length = length;
+    return sparse;
+  }),
+);
 const overlapKindArbitrary = fc.constantFrom(
   "same",
   "ancestor",
@@ -53,6 +79,13 @@ const propertyParameters = { numRuns: propertyRuns } as const;
 const propertyTimeout = isCi ? 120_000 : 15_000;
 
 type OverlapKind = "same" | "ancestor" | "descendant" | "root" | "array";
+
+interface AtomicityState {
+  readonly stable: DopData;
+  readonly valid: boolean;
+  readonly currentOnly?: DopData;
+  readonly nextOnly?: DopData;
+}
 
 describe("consistency properties", () => {
   it(
@@ -80,6 +113,19 @@ describe("consistency properties", () => {
       );
 
       expect(executedRuns).toBe(propertyRuns);
+    },
+    propertyTimeout,
+  );
+
+  it(
+    "rejects generated unsupported leaves, reserved keys, and sparse arrays",
+    () => {
+      fc.assert(
+        fc.property(unsupportedDataArbitrary, (value) => {
+          expect(() => assertDopData(value)).toThrow(DopDataError);
+        }),
+        propertyParameters,
+      );
     },
     propertyTimeout,
   );
@@ -230,6 +276,96 @@ describe("consistency properties", () => {
     },
     propertyTimeout,
   );
+
+  it(
+    "preserves engine state and revision for generated invalid and conflicting commits",
+    () => {
+      fc.assert(
+        fc.property(
+          dopDataArbitrary,
+          dopDataArbitrary,
+          (stable, changedValue) => {
+            const issues: readonly [ValidationIssue] = [
+              {
+                code: "candidate.invalid",
+                message: "The candidate is invalid.",
+              },
+            ];
+            const initial: AtomicityState = { stable, valid: true };
+            const current: AtomicityState = {
+              ...initial,
+              currentOnly: changedValue,
+            };
+            const invalidNext: AtomicityState = {
+              ...initial,
+              nextOnly: changedValue,
+              valid: false,
+            };
+            const conflictingNext: AtomicityState = {
+              ...initial,
+              currentOnly: stable,
+            };
+            const snapshots = [
+              snapshot(initial),
+              snapshot(current),
+              snapshot(invalidNext),
+              snapshot(conflictingNext),
+            ];
+            const engine = createDopEngine<AtomicityState>({
+              initialData: initial,
+              validate: (candidate) =>
+                candidate.valid ? { ok: true } : { ok: false, issues },
+            });
+
+            const first = engine.commit(initial, current);
+
+            expect(first.status).toBe("committed");
+            expect(first.revision).toBe(1);
+            const stateBeforeFailures = engine.get();
+            expect(stateBeforeFailures).toBe(current);
+
+            const invalid = engine.commit(initial, invalidNext);
+
+            expect(invalid).toEqual({
+              status: "invalid",
+              current: stateBeforeFailures,
+              revision: 1,
+              issues,
+            });
+            expect(engine.get()).toBe(stateBeforeFailures);
+
+            const conflict = engine.commit(initial, conflictingNext);
+
+            expect(conflict.status).toBe("conflict");
+            if (conflict.status !== "conflict") {
+              throw new Error("Expected a conflict result.");
+            }
+            expect(conflict.current).toBe(stateBeforeFailures);
+            expect(conflict.revision).toBe(1);
+            expect(engine.get()).toBe(stateBeforeFailures);
+
+            const noOp = engine.commit(
+              stateBeforeFailures,
+              stateBeforeFailures,
+            );
+            expect(noOp).toEqual({
+              status: "committed",
+              data: stateBeforeFailures,
+              revision: 1,
+              changed: false,
+              merged: false,
+            });
+            expect(snapshot(initial)).toBe(snapshots[0]);
+            expect(snapshot(current)).toBe(snapshots[1]);
+            expect(snapshot(invalidNext)).toBe(snapshots[2]);
+            expect(snapshot(conflictingNext)).toBe(snapshots[3]);
+          },
+        ),
+        propertyParameters,
+      );
+    },
+    propertyTimeout,
+  );
 });
 
 function expectCandidateReference(
@@ -312,6 +448,17 @@ function valueAtPath(path: readonly string[], leaf: DopData): DopData {
   return result;
 }
 
+function unknownValueAtPath(path: readonly string[], leaf: unknown): unknown {
+  let result = leaf;
+
+  for (let index = path.length - 1; index >= 0; index -= 1) {
+    const segment = path[index] as string;
+    result = { [segment]: result };
+  }
+
+  return result;
+}
+
 function assertBounds(root: DopData): void {
   const work: { readonly value: DopData; readonly depth: number }[] = [
     { value: root, depth: 0 },
@@ -345,7 +492,7 @@ function assertBounds(root: DopData): void {
   }
 }
 
-function snapshot(value: DopData): string {
+function snapshot(value: unknown): string {
   const serialized = JSON.stringify(value);
 
   if (serialized === undefined) {
