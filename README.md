@@ -1,6 +1,6 @@
 # DOP Engine
 
-개인 프로젝트에서 재사용하기 위한 private TypeScript ESM 라이브러리다. 브라우저 main thread의 immutable application data를 검증하고, stale update를 보수적으로 조정한 뒤 commit하고 구독자에게 알린다.
+개인 프로젝트에서 재사용하기 위한 TypeScript ESM 라이브러리다. 브라우저 main thread의 immutable application data를 검증하고, stale update를 보수적으로 조정한 뒤 commit하고 구독자에게 알린다.
 
 ## 사용 범위
 
@@ -8,11 +8,17 @@
 - calculation과 validator는 동기 함수여야 한다. 비동기 작업은 `get()`으로 base를 보존한 뒤 `commit(previous, next)`으로 연결한다.
 - Node.js에서는 테스트와 단일 프로세스 메모리 사용만 고려한다.
 - DB transaction, 여러 Worker·프로세스 사이의 원자성, 범용 상태 관리 framework를 제공하지 않는다.
-- package는 `UNLICENSED` private package이며 public registry에 게시하지 않는다.
+- `0.x` 버전은 개인 프로젝트에서 검증 중인 pre-1.0 API이므로 minor version에서도 공개 API가 바뀔 수 있다.
+
+## 설치
+
+```sh
+pnpm add @sangyuk-raccoon/dop-engine@0.4.0
+```
+
+다른 package manager를 사용한다면 같은 package와 version을 dependency로 추가한다. Browser TypeScript 애플리케이션의 bundler는 package root ESM import를 resolve해야 한다.
 
 ## 기본 사용
-
-이 package는 public registry에 게시하지 않으므로 빌드한 tarball 또는 workspace package로 연결한다. 브라우저 TypeScript 애플리케이션의 bundler는 package root ESM import를 resolve해야 한다.
 
 ```ts
 import { createDopEngine } from "@sangyuk-raccoon/dop-engine";
@@ -86,3 +92,16 @@ pnpm run verify
 ```
 
 `pnpm run verify`는 lint, typecheck, build, unit/property test, tarball consumer와 실제 Chromium native ESM smoke를 실행한다. 개별 package boundary는 `pnpm run pack:check`, browser 동작은 `pnpm run browser:check`로 다시 확인할 수 있다.
+
+아직 npm에 게시하지 않은 branch나 version을 다른 local project에서 시험하려면 build 후 tarball을 만든다.
+
+```sh
+pnpm run build
+pnpm pack --pack-destination /tmp/dop-engine-package
+```
+
+출력된 `.tgz` 경로를 consumer project의 `pnpm add`에 전달한다.
+
+## 라이선스
+
+[MIT](LICENSE)

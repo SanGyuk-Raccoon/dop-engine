@@ -1,8 +1,24 @@
 {
   "name": "@sangyuk-raccoon/dop-engine",
-  "version": "0.0.0",
-  "private": true,
-  "license": "UNLICENSED",
+  "version": "0.4.0",
+  "description": "A small TypeScript ESM consistency engine for immutable browser application state.",
+  "keywords": [
+    "data-oriented-programming",
+    "immutable",
+    "optimistic-concurrency",
+    "state-management",
+    "typescript"
+  ],
+  "author": "SanGyuk-Raccoon",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SanGyuk-Raccoon/dop-engine.git"
+  },
+  "homepage": "https://github.com/SanGyuk-Raccoon/dop-engine#readme",
+  "bugs": {
+    "url": "https://github.com/SanGyuk-Raccoon/dop-engine/issues"
+  },
   "type": "module",
   "sideEffects": false,
   "files": [
@@ -15,6 +31,10 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     }
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
     "format": "prettier --write .",

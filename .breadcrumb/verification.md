@@ -9,4 +9,5 @@
 - 패키지 구성이나 공개 API를 변경했다면 `pnpm run pack:check`를 독립 실행해 실제 tarball의 ESM import, declaration compile, internal subpath 차단과 file allowlist를 확인한다.
 - CI를 변경했다면 pull request와 `main` push trigger, 최소 권한, immutable action SHA, 고정된 Node·pnpm 버전과 로컬 gate 실행 순서를 검토한다.
 - Browser gate를 변경했다면 GitHub Actions가 `pnpm ci`, `pnpm run browser:install:ci`, `pnpm run verify` 순서로 실제 Chromium을 준비하고 built ESM smoke를 실행하는지 확인한다.
+- 공개 배포 구성을 변경했다면 `pnpm run pack:check`와 `npm pack --dry-run --json`으로 public manifest, version, registry/access, repository, license와 tarball allowlist를 확인한다. Release workflow는 manual-only trigger, immutable tag와 package version 일치, 최소 `contents: read`/`id-token: write`, 고정 action SHA, npm token 부재와 전체 verify 이후 `npm publish` 순서를 검토한다.
 - 실행한 명령과 결과, 실행하지 못한 검증과 그 이유를 최종 보고에 기록한다.
