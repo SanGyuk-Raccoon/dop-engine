@@ -249,6 +249,43 @@ describe("createDopEngine", () => {
     expect(listener).toHaveBeenCalledTimes(1);
   });
 
+  it("supports primitive root data through update, commit, and no-op paths", () => {
+    const engine = createDopEngine({ initialData: 0 });
+    const events: CommitEvent<number>[] = [];
+    engine.subscribe((event) => events.push(event));
+
+    const updated = engine.update((current) => current + 1);
+    const noOp = engine.update((current) => current);
+    const committed = engine.commit(1, 2);
+
+    expect(updated).toEqual({
+      status: "committed",
+      data: 1,
+      revision: 1,
+      changed: true,
+      merged: false,
+    });
+    expect(noOp).toEqual({
+      status: "committed",
+      data: 1,
+      revision: 1,
+      changed: false,
+      merged: false,
+    });
+    expect(committed).toEqual({
+      status: "committed",
+      data: 2,
+      revision: 2,
+      changed: true,
+      merged: false,
+    });
+    expect(engine.get()).toBe(2);
+    expect(events).toEqual([
+      { previous: 0, current: 1, revision: 1, merged: false },
+      { previous: 1, current: 2, revision: 2, merged: false },
+    ]);
+  });
+
   it.each([
     ["a native Promise", () => Promise.resolve({ value: "async" })],
     ["a custom thenable", () => createCalculationThenable()],
@@ -271,6 +308,38 @@ describe("createDopEngine", () => {
       expect(engine.commit(initial, initial).revision).toBe(0);
     },
   );
+
+  it("rejects a calculation result whose then property cannot be inspected", () => {
+    const initial: TestData = { value: "initial" };
+    const next: TestData = { value: "next" };
+    const cause = new Error("then access failed");
+    let thenAccesses = 0;
+    const uninspectable = new Proxy(next, {
+      get(target, property, receiver) {
+        if (property === "then") {
+          thenAccesses += 1;
+          throw cause;
+        }
+
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const engine = createDopEngine({ initialData: initial });
+    const listener = vi.fn();
+    engine.subscribe(listener);
+
+    const error = captureError(() => engine.update(() => uninspectable));
+
+    expect(error).toBeInstanceOf(EngineUsageError);
+    expect(error).not.toBe(cause);
+    expect(thenAccesses).toBe(1);
+    expect(engine.get()).toBe(initial);
+    expect(listener).not.toHaveBeenCalled();
+
+    const recovery = engine.commit(initial, next);
+    expect(recovery.status).toBe("committed");
+    expect(recovery.revision).toBe(1);
+  });
 
   it("rejects a non-function calculation and recovers the operation guard", () => {
     const initial: TestData = { value: "initial" };
